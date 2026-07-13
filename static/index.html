@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThreadAI - AI 视频生成平台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0b0d11;--card:#141720;--card2:#1a1e2a;--border:#232836;--accent:#6366f1;--accent2:#818cf8;--green:#10b981;--red:#ef4444;--yellow:#f59e0b;--text:#e2e8f0;--text2:#64748b;--text3:#94a3b8;--radius:12px}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;min-height:100vh}
+a{color:var(--accent2);text-decoration:none}a:hover{text-decoration:underline}
+
+/* Layout */
+.app{display:flex;flex-direction:column;min-height:100vh}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:56px;position:sticky;top:0;z-index:100}
+.topbar h1{font-size:18px;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.stats-bar{display:flex;gap:20px}
+.stat-item{text-align:center}
+.stat-item .val{font-size:20px;font-weight:700;color:var(--accent2)}
+.stat-item .lbl{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+
+/* Tabs */
+.tabs{display:flex;gap:0;background:var(--card);border-bottom:1px solid var(--border);padding:0 24px}
+.tab{padding:14px 24px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent2);border-color:var(--accent)}
+
+.main{flex:1;padding:24px;max-width:1400px;margin:0 auto;width:100%}
+.page{display:none}.page.active{display:block}
+
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.card-title{font-size:14px;font-weight:600;margin-bottom:16px;color:var(--text3)}
+.row{display:grid;gap:16px}.row-2{grid-template-columns:1fr 1fr}.row-3{grid-template-columns:1fr 1fr 1fr}
+@media(max-width:900px){.row-2,.row-3{grid-template-columns:1fr}}
+
+/* Form */
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:500}
+input,textarea,select{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;width:100%;outline:none;transition:border .2s;font-family:inherit}
+input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+textarea{resize:vertical;min-height:80px;line-height:1.5}
+
+/* Buttons */
+.btn{padding:9px 20px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s;display:inline-flex;align-items:center;gap:6px}
+.btn-sm{padding:5px 12px;font-size:11px}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover{opacity:.85}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text2)}.btn-ghost:hover{border-color:var(--accent);color:var(--accent2)}
+.btn-red{background:var(--red);color:#fff}.btn-red:hover{opacity:.85}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Badge */
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:600;letter-spacing:.3px}
+.badge-green{background:rgba(16,185,129,.12);color:var(--green)}
+.badge-yellow{background:rgba(245,158,11,.12);color:var(--yellow)}
+.badge-red{background:rgba(239,68,68,.12);color:var(--red)}
+.badge-purple{background:rgba(99,102,241,.12);color:var(--accent2)}
+.badge-gray{background:rgba(100,116,139,.12);color:var(--text2)}
+
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:10px 12px;text-align:left;color:var(--text2);font-weight:500;font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid rgba(35,40,54,.5)}
+tr:hover td{background:rgba(99,102,241,.03)}
+.mono{font-family:'Cascadia Code',Consolas,monospace;font-size:11px;color:var(--text2)}
+.truncate{max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:middle}
+
+/* Upload */
+.upload-zone{border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;transition:border .2s}
+.upload-zone:hover{border-color:var(--accent)}
+.upload-zone img{max-height:100px;border-radius:6px;margin:8px 0}
+.upload-hint{font-size:12px;color:var(--text2)}
+
+/* Task Cards */
+.task-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.task-card{background:var(--card2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;position:relative}
+.task-card .tc-prompt{font-size:13px;margin-bottom:8px;line-height:1.4;color:var(--text3)}
+.task-card .tc-meta{font-size:11px;color:var(--text2);display:flex;gap:12px;margin-bottom:8px}
+.task-card video{width:100%;border-radius:8px;margin-top:8px}
+.task-card .tc-status{position:absolute;top:12px;right:12px}
+
+/* Log */
+.log-panel{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:240px;overflow-y:auto;font-family:'Cascadia Code',monospace;font-size:11px;line-height:1.6;margin-top:12px}
+.log-panel .ok{color:var(--green)}.log-panel .err{color:var(--red)}.log-panel .info{color:var(--text2)}
+
+/* Spinner */
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Modal */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;justify-content:center;align-items:center}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;max-width:720px;width:90%;max-height:85vh;overflow-y:auto;position:relative}
+.modal video{width:100%;border-radius:8px}
+.modal-close{position:absolute;top:12px;right:16px;font-size:20px;color:var(--text2);cursor:pointer;background:none;border:none}
+
+/* Filter */
+.filter-bar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.filter-btn{padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;transition:all .15s}
+.filter-btn.active,.filter-btn:hover{border-color:var(--accent);color:var(--accent2);background:rgba(99,102,241,.08)}
+.warn-text{color:var(--red);font-size:12px;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <h1>ThreadAI</h1>
+    <div class="stats-bar">
+      <div class="stat-item"><div class="val" id="s-accounts">-</div><div class="lbl">账号</div></div>
+      <div class="stat-item"><div class="val" id="s-points">-</div><div class="lbl">积分</div></div>
+      <div class="stat-item"><div class="val" id="s-videos">-</div><div class="lbl">视频</div></div>
+      <div class="stat-item"><div class="val" id="s-running">-</div><div class="lbl">队列</div></div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('gen')">视频生成</div>
+    <div class="tab" onclick="switchTab('acc')">账号管理</div>
+    <div class="tab" onclick="switchTab('his')">生成历史</div>
+  </div>
+
+  <div class="main">
+    <!-- ===== 视频生成 ===== -->
+    <div class="page active" id="page-gen">
+      <div class="row row-2">
+        <div>
+          <div class="card">
+            <div class="card-title">新建生成任务</div>
+            <div class="field"><label>视频描述（每行一个，支持批量）</label>
+              <textarea id="v-prompt" placeholder="输入视频描述，每行一条可批量提交...">一只可爱的小猫在丛林中玩耍</textarea>
+            </div>
+            <div class="field">
+              <label>参考图片（可选）</label>
+              <label class="upload-zone" for="img-input">
+                <input type="file" id="img-input" accept="image/*" onchange="handleUpload(this)" style="display:none">
+                <div id="upload-preview"><span class="upload-hint">点击或拖拽上传参考图</span></div>
+              </label>
+              <input type="hidden" id="v-image-url" value="">
+              <div id="model-warn"></div>
+            </div>
+            <div class="row row-3" style="margin-bottom:14px">
+              <div class="field"><label>模型</label>
+                <select id="v-model" onchange="checkModelCompat()">
+                  <option>Pixverse V5</option>
+                  <option>Seedance 1.5 Pro</option>
+                  <option>Kling 2.6</option>
+                  <option selected>Seedance 2.0 Mini</option>
+                  <option>Seedance 2.0 Fast</option>
+                  <option>Kling 2.5</option>
+                  <option>Kling 3.0</option>
+                  <option>Kling 3.0 Omni</option>
+                  <option>Wan 2.5</option>
+                  <option>Wan 2.6</option>
+                  <option>Wan 2.7</option>
+                  <option>Seedance 2.0</option>
+                  <option>Kling o1</option>
+                  <option>Veo 3</option>
+                  <option>Veo 3.1</option>
+                </select>
+              </div>
+              <div class="field"><label>时长</label><select id="v-duration"><option value="5">5秒</option><option value="10">10秒</option></select></div>
+              <div class="field"><label>比例</label><select id="v-ratio"><option>16:9</option><option>9:16</option><option>1:1</option></select></div>
+            </div>
+            <button class="btn btn-primary" onclick="doVideoSubmit()" id="btn-video">提交生成</button>
+          </div>
+        </div>
+        <div>
+          <div class="card" style="min-height:200px">
+            <div class="card-title">生成队列</div>
+            <div class="task-grid" id="task-queue"></div>
+            <div id="queue-empty" class="upload-hint" style="text-align:center;padding:40px 0">暂无任务</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 账号管理 ===== -->
+    <div class="page" id="page-acc">
+      <div class="card">
+        <div class="card-title">操作</div>
+        <div class="btn-group" style="margin-bottom:12px">
+          <button class="btn btn-primary" onclick="doRegister()" id="btn-reg">注册单号</button>
+          <button class="btn btn-green" onclick="doFission()" id="btn-fission">批量裂变</button>
+          <input type="number" id="fission-depth" value="3" min="1" max="20" style="width:60px">
+          <button class="btn btn-ghost" onclick="doCheckin()" id="btn-checkin">全部签到</button>
+        </div>
+        <div class="log-panel" id="reg-log"><div class="info">就绪</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">账号列表</div>
+        <div style="overflow-x:auto">
+          <table><thead><tr><th>#</th><th>邮箱</th><th>密码</th><th>积分</th><th>状态</th><th>最近使用</th><th>操作</th></tr></thead>
+          <tbody id="acc-table"><tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">加载中...</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 生成历史 ===== -->
+    <div class="page" id="page-his">
+      <div class="card">
+        <div class="card-title">历史记录</div>
+        <div class="filter-bar" id="his-filters">
+          <button class="filter-btn active" onclick="filterHis('')">全部</button>
+          <button class="filter-btn" onclick="filterHis('done')">完成</button>
+          <button class="filter-btn" onclick="filterHis('generating')">生成中</button>
+          <button class="filter-btn" onclick="filterHis('error')">失败</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table><thead><tr><th>时间</th><th>描述</th><th>模型</th><th>账号</th><th>消耗</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="his-table"><tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">加载中...</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Video Modal -->
+<div class="modal-bg" id="video-modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <video id="modal-video" controls></video>
+    <div style="margin-top:10px;font-size:12px" id="modal-info"></div>
+  </div>
+</div>
+
+<script>
+const S = {active:'可用',exhausted:'耗尽',expired:'过期',done:'完成',generating:'生成中',error:'失败',pending:'排队中'};
+const NO_HUMAN = ['Seedance 2.0 Mini','Seedance 2.0','Seedance 2.0 Fast'];
+let allVideos = [], hisFilter = '', activeTasks = {};
+
+function ts2str(ts){ return ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-' }
+function badgeCls(s){ return s==='active'||s==='done'?'badge-green':s==='exhausted'||s==='generating'?s==='generating'?'badge-purple':'badge-yellow':s==='error'||s==='expired'?'badge-red':'badge-gray' }
+
+// Tabs
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['gen','acc','his'][i]===id));
+  document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',['gen','acc','his'][i]===id));
+  if(id==='acc') fetchAccounts();
+  if(id==='his') fetchVideos();
+}
+
+// Stats
+async function fetchStats(){
+  try{ const d=await(await fetch('/api/stats')).json();
+    document.getElementById('s-accounts').textContent=d.accounts;
+    document.getElementById('s-points').textContent=d.total_points;
+    document.getElementById('s-videos').textContent=d.videos;
+    document.getElementById('s-running').textContent=d.running_tasks;
+  }catch(e){}
+}
+
+// Accounts
+async function fetchAccounts(){
+  try{ const accs=await(await fetch('/api/accounts')).json();
+    const tb=document.getElementById('acc-table');
+    if(!accs.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">暂无账号</td></tr>';return}
+    tb.innerHTML=accs.map((a,i)=>`<tr>
+      <td>${i+1}</td><td>${a.email}</td><td><span class="mono">${a.password}</span></td>
+      <td><strong>${a.points}</strong></td>
+      <td><span class="badge ${badgeCls(a.status)}">${S[a.status]||a.status}</span></td>
+      <td>${ts2str(a.last_used)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="refreshAccount('${a.email}')">刷新</button></td>
+    </tr>`).join('');
+  }catch(e){}
+}
+
+// Videos
+async function fetchVideos(){
+  try{ allVideos=await(await fetch('/api/videos')).json(); renderHistory(); }catch(e){}
+}
+function renderHistory(){
+  const tb=document.getElementById('his-table');
+  const list=hisFilter?allVideos.filter(v=>v.status===hisFilter):allVideos;
+  if(!list.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">暂无记录</td></tr>';return}
+  tb.innerHTML=list.map(v=>{
+    const act=v.status==='done'&&v.local_path?`<a href="#" onclick="openModal('${v.local_path}','${v.prompt.replace(/'/g,"\\'")}');return false">播放</a> · <a href="${v.video_url}" target="_blank">下载</a>`:'-';
+    return `<tr>
+      <td>${ts2str(v.created_at)}</td>
+      <td><span class="truncate" title="${v.prompt}">${v.prompt}</span></td>
+      <td>${v.model}</td><td class="mono">${(v.account_email||'').split('@')[0]}</td>
+      <td>${v.points_cost}</td>
+      <td><span class="badge ${badgeCls(v.status)}">${S[v.status]||v.status}</span></td>
+      <td>${act}</td></tr>`;
+  }).join('');
+}
+function filterHis(s){
+  hisFilter=s;
+  document.querySelectorAll('#his-filters .filter-btn').forEach(b=>b.classList.toggle('active',b.textContent===(S[s]||'全部')));
+  renderHistory();
+}
+
+// Modal
+function openModal(src,prompt){
+  document.getElementById('modal-video').src=src;
+  document.getElementById('modal-info').textContent=prompt;
+  document.getElementById('video-modal').classList.add('show');
+}
+function closeModal(){
+  document.getElementById('video-modal').classList.remove('show');
+  document.getElementById('modal-video').pause();
+  document.getElementById('modal-video').src='';
+}
+
+// Upload
+function checkModelCompat(){
+  const w=document.getElementById('model-warn');
+  const img=document.getElementById('v-image-url').value;
+  const model=document.getElementById('v-model').value;
+  w.innerHTML=(img&&NO_HUMAN.includes(model))?'<div class="warn-text">⚠ '+model+' 不支持真人参考图，请切换模型或移除图片</div>':'';
+}
+async function handleUpload(input){
+  const file=input.files[0]; if(!file) return;
+  const pv=document.getElementById('upload-preview');
+  pv.innerHTML='<span class="spin"></span> 上传中...';
+  try{
+    const form=new FormData(); form.append('file',file); form.append('filename',file.name);
+    const r=await fetch('/api/upload',{method:'POST',body:form});
+    if(!r.ok){pv.innerHTML='<span class="upload-hint" style="color:var(--red)">上传失败</span>';return}
+    const d=await r.json();
+    if(d.url){
+      document.getElementById('v-image-url').value=d.url;
+      const url=d.preview||('https://cdn.oreateai.com/'+d.url);
+      pv.innerHTML=`<img src="${url}"><br><span class="upload-hint">${file.name} · <a href="#" onclick="clearUpload();return false" style="color:var(--red)">移除</a></span>`;
+      checkModelCompat();
+    }
+  }catch(e){pv.innerHTML='<span class="upload-hint" style="color:var(--red)">上传异常</span>'}
+}
+function clearUpload(){
+  document.getElementById('v-image-url').value='';
+  document.getElementById('upload-preview').innerHTML='<span class="upload-hint">点击或拖拽上传参考图</span>';
+  document.getElementById('img-input').value='';
+  document.getElementById('model-warn').innerHTML='';
+}
+
+// Log
+function addLog(id,msg,cls='info'){
+  const el=document.getElementById(id);
+  el.innerHTML+=`<div class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+  el.scrollTop=el.scrollHeight;
+}
+
+// Task queue
+function renderQueue(){
+  const el=document.getElementById('task-queue');
+  const empty=document.getElementById('queue-empty');
+  const ids=Object.keys(activeTasks);
+  empty.style.display=ids.length?'none':'block';
+  el.innerHTML=ids.map(tid=>{
+    const t=activeTasks[tid];
+    const st=t.status==='done'?'完成':t.status==='error'?'失败':'生成中';
+    const cls=badgeCls(t.status==='running'?'generating':t.status);
+    let body=`<div class="tc-prompt">${t.prompt||''}</div><div class="tc-meta"><span>${t.model||''}</span><span>${t.duration||5}秒</span></div>`;
+    if(t.status==='done'&&t.result){
+      body+=`<video controls src="${t.result.local_path||t.result.video_url}"></video>
+        <div style="margin-top:6px;font-size:11px"><a href="${t.result.video_url}" target="_blank">下载原始视频</a></div>`;
+    }
+    if(t.status==='error') body+=`<div style="color:var(--red);font-size:11px;margin-top:4px">失败: ${(t.result?.error||'').toString().slice(0,80)}</div>`;
+    return `<div class="task-card"><div class="tc-status"><span class="badge ${cls}">${st}</span></div>${body}</div>`;
+  }).join('');
+}
+
+async function pollTaskAsync(tid){
+  while(true){
+    await new Promise(r=>setTimeout(r,3000));
+    try{
+      const d=await(await fetch('/api/task/'+tid)).json();
+      if(d.status==='done'){activeTasks[tid].status='done';activeTasks[tid].result=d.result;renderQueue();fetchStats();fetchVideos();return}
+      if(d.status==='error'){activeTasks[tid].status='error';activeTasks[tid].result=d.result;renderQueue();fetchVideos();return}
+    }catch(e){return}
+  }
+}
+
+async function doVideoSubmit(){
+  const lines=document.getElementById('v-prompt').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(!lines.length) return;
+  const img=document.getElementById('v-image-url').value;
+  const model=document.getElementById('v-model').value;
+  if(img&&NO_HUMAN.includes(model)){alert(model+' 不支持真人参考图，请切换模型或移除图片');return}
+  const dur=parseInt(document.getElementById('v-duration').value);
+  const ratio=document.getElementById('v-ratio').value;
+
+  for(const prompt of lines){
+    try{
+      const d=await(await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({prompt,model_name:model,duration:dur,ratio,image_url:img})})).json();
+      activeTasks[d.task_id]={status:'running',prompt,model,duration:dur};
+      renderQueue();
+      pollTaskAsync(d.task_id);
+    }catch(e){}
+  }
+  document.getElementById('v-prompt').value='';
+  fetchStats();
+}
+
+// Account actions
+async function refreshAccount(email){
+  try{
+    const d=await(await fetch('/api/accounts/'+encodeURIComponent(email)+'/refresh',{method:'POST'})).json();
+    addLog('reg-log',`${email}: ${d.points}积分, ${S[d.status]||d.status}`,d.status==='active'?'ok':'err');
+    fetchAccounts();fetchStats();
+  }catch(e){addLog('reg-log','刷新失败','err')}
+}
+
+async function pollBg(tid,logId,onDone){
+  let n=0;
+  while(true){
+    await new Promise(r=>setTimeout(r,3000)); n++;
+    try{
+      const d=await(await fetch('/api/task/'+tid)).json();
+      if(d.status==='done'){onDone(d);return}
+      if(d.status==='error'){addLog(logId,'失败: '+(d.result?.error||''),'err');return}
+      if(n%5===0) addLog(logId,'处理中...','info');
+    }catch(e){addLog(logId,'查询失败','err');return}
+  }
+}
+
+async function doRegister(){
+  const btn=document.getElementById('btn-reg');btn.disabled=true;btn.textContent='注册中...';
+  addLog('reg-log','正在注册...','info');
+  try{
+    const d=await(await fetch('/api/register',{method:'POST'})).json();
+    await pollBg(d.task_id,'reg-log',res=>{
+      addLog('reg-log',`注册成功: ${res.result.email} (${res.result.points}积分)`,'ok');
+      fetchAccounts();fetchStats();
+    });
+  }catch(e){addLog('reg-log','注册失败','err')}
+  btn.disabled=false;btn.textContent='注册单号';
+}
+async function doFission(){
+  const btn=document.getElementById('btn-fission');btn.disabled=true;btn.textContent='裂变中...';
+  const depth=parseInt(document.getElementById('fission-depth').value)||3;
+  addLog('reg-log',`开始裂变 (${depth}层)...`,'info');
+  try{
+    const d=await(await fetch('/api/fission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({depth})})).json();
+    await pollBg(d.task_id,'reg-log',res=>{
+      addLog('reg-log',`裂变完成: ${res.result.success}/${res.result.total}`,'ok');
+      (res.result.accounts||[]).forEach(a=>addLog('reg-log',`  + ${a.email} (${a.points}积分)`,'ok'));
+      fetchAccounts();fetchStats();
+    });
+  }catch(e){addLog('reg-log','裂变失败','err')}
+  btn.disabled=false;btn.textContent='批量裂变';
+}
+async function doCheckin(){
+  const btn=document.getElementById('btn-checkin');btn.disabled=true;btn.textContent='签到中...';
+  addLog('reg-log','正在批量签到...','info');
+  try{
+    const d=await(await fetch('/api/checkin',{method:'POST'})).json();
+    await pollBg(d.task_id,'reg-log',res=>{
+      addLog('reg-log',`签到完成: ${res.result.success}/${res.result.total}, 总积分 ${res.result.total_points}`,'ok');
+      fetchAccounts();fetchStats();
+    });
+  }catch(e){addLog('reg-log','签到失败','err')}
+  btn.disabled=false;btn.textContent='全部签到';
+}
+
+// Init
+fetchStats();fetchAccounts();fetchVideos();
+setInterval(fetchStats,8000);
+</script>
+</body>
+</html>

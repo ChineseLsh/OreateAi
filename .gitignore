@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime data
+data.db
+data.db-shm
+data.db-wal
+accounts.jsonl
+videos/*.mp4
+test_*.py
+test_*.mp4
+test_*.jpg
+test_*.png
+
+# HAR captures
+.playwright-mcp/
+
+# IDE
+.vscode/
+.idea/
+
+# Env
+.env
+*.log
