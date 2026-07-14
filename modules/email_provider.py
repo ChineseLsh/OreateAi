@@ -277,14 +277,14 @@ class LinshiyouxiangProvider:
 
 
 class AutoEmailProvider:
-    """自动选择：linshiyouxiang(最稳) → mail.tm → guerrilla"""
+    """自动选择：mail.tm → linshiyouxiang → guerrilla"""
 
     def __init__(self, **_):
         self._inner = None
         self.address = ""
 
     def create(self, **_) -> str:
-        providers = [LinshiyouxiangProvider, TempMailProvider, GuerrillaMailProvider]
+        providers = [TempMailProvider, LinshiyouxiangProvider, GuerrillaMailProvider]
         for cls in providers:
             try:
                 self._inner = cls()
