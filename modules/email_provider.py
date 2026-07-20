@@ -7,6 +7,8 @@ import random
 import string
 import httpx
 
+from config import EMAIL_PROVIDER, LUCKMAIL_API_KEY
+
 log = logging.getLogger(__name__)
 
 
@@ -277,14 +279,19 @@ class LinshiyouxiangProvider:
 
 
 class AutoEmailProvider:
-    """自动选择：mail.tm → linshiyouxiang → guerrilla"""
+    """自动选择已配置 LuckMail，再回退到现有临时邮箱。"""
 
     def __init__(self, **_):
         self._inner = None
         self.address = ""
 
     def create(self, **_) -> str:
-        providers = [TempMailProvider, LinshiyouxiangProvider, GuerrillaMailProvider]
+        providers = []
+        if LUCKMAIL_API_KEY:
+            from modules.luckmail import LuckMailProvider
+
+            providers.append(LuckMailProvider)
+        providers.extend((TempMailProvider, LinshiyouxiangProvider, GuerrillaMailProvider))
         for cls in providers:
             try:
                 self._inner = cls()
@@ -316,3 +323,25 @@ class ManualEmailProvider:
 
     def close(self):
         pass
+
+
+def build_email_provider(name: str | None = None, address: str = ""):
+    if address:
+        return ManualEmailProvider(address)
+    provider_name = (name or EMAIL_PROVIDER or "auto").strip().lower()
+    if provider_name == "luckmail":
+        from modules.luckmail import LuckMailProvider
+
+        return LuckMailProvider()
+    providers = {
+        "auto": AutoEmailProvider,
+        "mailtm": TempMailProvider,
+        "mail.tm": TempMailProvider,
+        "linshiyouxiang": LinshiyouxiangProvider,
+        "guerrilla": GuerrillaMailProvider,
+        "1secmail": OneSecMailProvider,
+    }
+    provider_cls = providers.get(provider_name)
+    if provider_cls is None:
+        raise ValueError(f"unsupported email provider: {provider_name}")
+    return provider_cls()

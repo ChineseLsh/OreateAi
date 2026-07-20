@@ -1,11 +1,18 @@
 """登录模块 — emaillogin 接口 + 批量每日签到"""
 
+import json
 import logging
-from config import PASSPORT_API, BIZ_API
+from config import PASSPORT_API, BIZ_API, OREATE_API
 from core.client import OreateClient
 from core.crypto import encrypt_password
-from core.fingerprint import generate_jt
-from core.db import list_accounts, update_account_points, update_account_cookies, set_account_status
+from core.db import (
+    list_accounts,
+    set_account_status,
+    try_lock_account,
+    unlock_account,
+    update_account_cookies,
+    update_account_points,
+)
 from modules.register import get_ticket
 
 log = logging.getLogger(__name__)
@@ -15,12 +22,11 @@ def email_login(client: OreateClient, email: str, password: str) -> dict:
     ticket_id, pk = get_ticket(client)
     encrypted_pwd = encrypt_password(password, pk)
 
-    resp = client.post(f"{PASSPORT_API}/emaillogin", json={
+    resp = client.risk_post(f"{PASSPORT_API}/emaillogin", {
         "fr": "main",
         "ticketID": ticket_id,
         "email": email,
         "password": encrypted_pwd,
-        "jt": generate_jt(),
     })
 
     data = resp.get("data", {})
@@ -33,41 +39,67 @@ def email_login(client: OreateClient, email: str, password: str) -> dict:
 
 
 def daily_checkin_all() -> list[dict]:
-    """批量登录所有账号触发每日签到，返回 [{email, pts_before, pts_after, ok}]"""
+    """Restore each account, claim first-use points, and report the delta."""
+    from core.pool import restore_session
+
     accs = list_accounts()
     results = []
 
     for acc in accs:
         email = acc["email"]
-        password = acc.get("password", "")
-        if not password:
+        if not try_lock_account(email):
+            results.append({"email": email, "ok": False, "status": "busy", "error": "account is busy"})
             continue
 
-        client = OreateClient()
+        client = None
         try:
-            result = email_login(client, email, password)
-            if not result.get("success"):
-                results.append({"email": email, "ok": False, "error": result.get("error", "")})
+            cookies = json.loads(acc.get("cookies", "{}") or "{}")
+            client = OreateClient(browser=True, cookies=cookies)
+            restored = restore_session(client, acc)
+            if restored is not True:
+                set_account_status(email, "expired" if restored is False else acc.get("status", "active"))
+                results.append({"email": email, "ok": False, "status": "login_failed", "error": "session restore failed"})
                 continue
 
-            cookies = {c.name: c.value for c in client.session.cookies.jar}
-            update_account_cookies(email, cookies)
+            before = client.get(f"{BIZ_API}/point/getrestpoints")["data"]["restPoint"]
+            claim = client.get(f"{OREATE_API}/account/getfirstusepoint")
+            after = client.get(f"{BIZ_API}/point/getrestpoints")["data"]["restPoint"]
+            earned = max(after - before, 0)
+            claim_code = claim.get("status", {}).get("code", -1)
+            status = "claimed" if earned > 0 else "already_claimed" if claim_code == 0 else "claim_failed"
+            ok = claim_code == 0
 
-            resp = client.get(f"{BIZ_API}/point/getrestpoints")
-            pts = resp["data"]["restPoint"]
-            update_account_points(email, pts)
+            update_account_cookies(email, client.export_cookies())
+            update_account_points(email, after)
             set_account_status(email, "active")
 
-            results.append({"email": email, "ok": True, "points": pts})
-            log.info(f"checkin: {email} -> {pts} pts")
+            results.append({
+                "email": email,
+                "ok": ok,
+                "status": status,
+                "points_before": before,
+                "points_after": after,
+                "earned": earned,
+                "error": "" if ok else claim.get("status", {}).get("msg", "claim failed"),
+            })
+            log.info("checkin: %s %s +%s", email, status, earned)
 
         except Exception as e:
-            results.append({"email": email, "ok": False, "error": str(e)})
+            results.append({"email": email, "ok": False, "status": "error", "error": str(e)})
             log.warning(f"checkin error {email}: {e}")
         finally:
-            client.close()
+            try:
+                if client:
+                    try:
+                        client.close()
+                    except Exception as exc:
+                        log.warning(
+                            "checkin browser close failed: %s", type(exc).__name__
+                        )
+            finally:
+                unlock_account(email)
 
     ok = sum(1 for r in results if r.get("ok"))
-    total_pts = sum(r.get("points", 0) for r in results if r.get("ok"))
-    log.info(f"checkin done: {ok}/{len(results)} accounts, total {total_pts} pts")
+    earned = sum(r.get("earned", 0) for r in results if r.get("ok"))
+    log.info(f"checkin done: {ok}/{len(results)} accounts, earned {earned} pts")
     return results

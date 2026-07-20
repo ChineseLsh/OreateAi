@@ -6,7 +6,7 @@ import time
 
 from core.client import OreateClient
 from modules.register import register, RegisterResult
-from modules.email_provider import LinshiyouxiangProvider
+from modules.email_provider import build_email_provider
 
 log = logging.getLogger(__name__)
 
@@ -30,10 +30,10 @@ def _save_result(result: RegisterResult):
         }, ensure_ascii=False) + "\n")
 
 
-def _retry_create_provider(max_retries: int = 3) -> LinshiyouxiangProvider:
+def _retry_create_provider(provider_name: str | None = None, max_retries: int = 3):
     for i in range(max_retries):
         try:
-            provider = LinshiyouxiangProvider()
+            provider = build_email_provider(provider_name)
             provider.create()
             return provider
         except Exception as e:
@@ -42,10 +42,13 @@ def _retry_create_provider(max_retries: int = 3) -> LinshiyouxiangProvider:
     raise RuntimeError("failed to create email provider after retries")
 
 
-def fission_register(parent_invite_code: str) -> RegisterResult:
-    provider = _retry_create_provider()
+def fission_register(
+    parent_invite_code: str,
+    provider_name: str | None = None,
+) -> RegisterResult:
+    provider = _retry_create_provider(provider_name)
     try:
-        with OreateClient() as client:
+        with OreateClient(browser=True) as client:
             client.set_referer(
                 f"https://www.oreateai.com/userlogin/fissionregister/zh"
                 f"?fr=inviteFriend&inviteCode={parent_invite_code}"
@@ -63,6 +66,7 @@ def chain_fission(
     seed_invite_code: str,
     depth: int = 3,
     rotate_ip: bool = True,
+    provider_name: str | None = None,
     _rotator=None,
 ) -> list[RegisterResult]:
     rotator = _rotator
@@ -83,7 +87,7 @@ def chain_fission(
             else:
                 log.info(f"=== fission #{i+1}/{depth} ===")
 
-            result = fission_register(current_code)
+            result = fission_register(current_code, provider_name)
             results.append(result)
 
             if not result.success:
@@ -100,7 +104,11 @@ def chain_fission(
     return results
 
 
-def seed_and_fission(depth: int = 3, rotate_ip: bool = True) -> list[RegisterResult]:
+def seed_and_fission(
+    depth: int = 3,
+    rotate_ip: bool = True,
+    provider_name: str | None = None,
+) -> list[RegisterResult]:
     """从零开始：先注册种子号，再链式裂变（每号换 IP）"""
     rotator = NodeRotator() if (rotate_ip and HAS_CLASH) else None
 
@@ -112,9 +120,9 @@ def seed_and_fission(depth: int = 3, rotate_ip: bool = True) -> list[RegisterRes
         else:
             log.info("=== registering seed account ===")
 
-        provider = _retry_create_provider()
+        provider = _retry_create_provider(provider_name)
         try:
-            with OreateClient() as client:
+            with OreateClient(browser=True) as client:
                 seed = register(client, provider)
         finally:
             provider.close()
@@ -126,7 +134,13 @@ def seed_and_fission(depth: int = 3, rotate_ip: bool = True) -> list[RegisterRes
         _save_result(seed)
         log.info(f"seed OK: {seed.email} pts={seed.points} invite={seed.invite_code[:24]}...")
 
-        children = chain_fission(seed.invite_code, depth=depth, rotate_ip=rotate_ip, _rotator=rotator)
+        children = chain_fission(
+            seed.invite_code,
+            depth=depth,
+            rotate_ip=rotate_ip,
+            provider_name=provider_name,
+            _rotator=rotator,
+        )
         return [seed] + children
     finally:
         if rotator:

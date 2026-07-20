@@ -28,54 +28,57 @@ def get_upload_token(client, filename: str, file_ext: str, file_size: int, sourc
     return info
 
 
-def _make_gcs_client(use_proxy: bool = True) -> httpx.Client:
-    if use_proxy and DEFAULT_PROXY:
-        transport = httpx.HTTPTransport(proxy=DEFAULT_PROXY, verify=_ssl_ctx, retries=2)
+def _make_gcs_client(proxy: str | None = DEFAULT_PROXY) -> httpx.Client:
+    if proxy:
+        transport = httpx.HTTPTransport(proxy=proxy, verify=_ssl_ctx, retries=2)
     else:
         transport = httpx.HTTPTransport(verify=_ssl_ctx, retries=2)
     return httpx.Client(timeout=httpx.Timeout(connect=15, read=120, write=120, pool=15),
                         transport=transport, verify=_ssl_ctx)
 
 
-def upload_to_gcs(token_info: dict, file_data: bytes, content_type: str = "image/webp") -> str:
+def upload_to_gcs(
+    token_info: dict,
+    file_data: bytes,
+    content_type: str = "image/webp",
+    proxy: str | None = DEFAULT_PROXY,
+) -> str:
     bucket = token_info["bucket"]
     object_path = token_info["objectPath"]
     session_key = token_info["sessionkey"]
     init_url = f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o"
 
-    for attempt, use_proxy in enumerate([True, False]):
-        http = _make_gcs_client(use_proxy)
-        label = "proxy" if use_proxy else "direct"
-        try:
-            init_resp = http.post(
-                init_url,
-                params={"uploadType": "resumable", "name": object_path},
-                headers={
-                    "Authorization": f"Bearer {session_key}",
-                    "Content-Type": "application/json",
-                    "X-Upload-Content-Type": content_type,
-                    "X-Upload-Content-Length": str(len(file_data)),
-                },
-                json={},
-            )
-            upload_url = init_resp.headers.get("Location") or init_resp.headers.get("location")
-            if not upload_url:
-                log.warning(f"[{label}] no upload URL: {init_resp.status_code}")
-                continue
+    http = _make_gcs_client(proxy)
+    try:
+        init_resp = http.post(
+            init_url,
+            params={"uploadType": "resumable", "name": object_path},
+            headers={
+                "Authorization": f"Bearer {session_key}",
+                "Content-Type": "application/json",
+                "X-Upload-Content-Type": content_type,
+                "X-Upload-Content-Length": str(len(file_data)),
+            },
+            json={},
+        )
+        upload_url = init_resp.headers.get("Location") or init_resp.headers.get("location")
+        if not upload_url:
+            log.warning("no upload URL: %s", init_resp.status_code)
+            return ""
 
-            log.info(f"[{label}] uploading {len(file_data)} bytes...")
-            put_resp = http.put(upload_url, content=file_data, headers={"Content-Type": content_type})
-            if put_resp.status_code == 200:
-                cdn_url = f"https://{CDN_URL.replace('https://','')}/{object_path}"
-                log.info(f"upload done: {cdn_url}")
-                return cdn_url
-            log.warning(f"[{label}] PUT failed: {put_resp.status_code}")
-        except Exception as e:
-            log.warning(f"[{label}] GCS upload error: {e}")
-        finally:
-            http.close()
+        log.info("uploading %s bytes...", len(file_data))
+        put_resp = http.put(upload_url, content=file_data, headers={"Content-Type": content_type})
+        if put_resp.status_code == 200:
+            cdn_url = f"https://{CDN_URL.replace('https://','')}/{object_path}"
+            log.info(f"upload done: {cdn_url}")
+            return cdn_url
+        log.warning("GCS PUT failed: %s", put_resp.status_code)
+    except Exception as e:
+        log.warning("GCS upload error: %s", type(e).__name__)
+    finally:
+        http.close()
 
-    log.error("GCS upload failed on all attempts")
+    log.error("GCS upload failed")
     return ""
 
 
@@ -98,14 +101,14 @@ def upload_image(client, file_path: str, source: str = "aiVideo") -> str:
         ct = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
 
     token = get_upload_token(client, f"_upload_{name}", ext, len(file_data), source)
-    return upload_to_gcs(token, file_data, ct)
+    return upload_to_gcs(token, file_data, ct, proxy=client.proxy)
 
 
 def upload_image_bytes(client, data: bytes, filename: str = "upload", ext: str = "webp", source: str = "aiImage") -> str:
     """上传内存中的图片字节，返回 objectPath（给 videoConfig.textOrImage.image 用）"""
     ct = {"webp": "image/webp", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, "image/webp")
     token = get_upload_token(client, f"_upload_{filename}", ext, len(data), source)
-    cdn_url = upload_to_gcs(token, data, ct)
+    cdn_url = upload_to_gcs(token, data, ct, proxy=client.proxy)
     if cdn_url:
         return token["objectPath"]
     return ""

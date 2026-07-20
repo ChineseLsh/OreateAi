@@ -18,17 +18,15 @@ from core.client import OreateClient
 from core.db import (
     init_db, migrate_jsonl, list_accounts, list_videos, get_stats,
     save_video, update_video, update_account_points, set_account_status,
-    get_account,
+    get_account, try_lock_account, unlock_account,
 )
 from core.pool import (
     auto_acquire, release_account, refresh_points,
     register_and_add_to_pool, restore_session,
 )
-from modules.register import register
 from modules.login import daily_checkin_all
-from modules.email_provider import LinshiyouxiangProvider
 from modules.fission import chain_fission, seed_and_fission
-from modules.video import generate_video, get_remaining_points
+from modules.video import generate_video, get_remaining_points, resolve_video_spec
 from modules.upload import upload_image_bytes as upload_image
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
@@ -55,12 +53,20 @@ def startup():
 class FissionReq(BaseModel):
     invite_code: str = ""
     depth: int = 3
+    provider: str | None = None
+
+
+class RegisterReq(BaseModel):
+    provider: str | None = None
+
 
 class VideoReq(BaseModel):
     prompt: str
     model_name: str = "Seedance 2.0 Mini"
     duration: int = 5
     ratio: str = "16:9"
+    resolution: str = "720"
+    is_audio: bool = True
     image_url: str = ""
 
 
@@ -85,20 +91,21 @@ async def api_accounts():
     accs = list_accounts()
     for a in accs:
         a.pop("cookies", None)
+        a.pop("password", None)
     return accs
 
 
 @app.post("/api/register")
-async def api_register(bg: BackgroundTasks):
+async def api_register(bg: BackgroundTasks, req: RegisterReq | None = None):
     tid = uuid.uuid4().hex[:8]
     tasks_status[tid] = {"status": "running", "type": "register"}
-    bg.add_task(_bg_register, tid)
+    bg.add_task(_bg_register, tid, req.provider if req else None)
     return {"task_id": tid, "status": "started"}
 
 
-def _bg_register(tid: str):
+def _bg_register(tid: str, provider_name: str | None = None):
     try:
-        acc = register_and_add_to_pool()
+        acc = register_and_add_to_pool(provider_name)
         if acc:
             tasks_status[tid] = {"status": "done", "type": "register", "result": {
                 "success": True, "email": acc["email"], "points": acc["points"],
@@ -114,20 +121,35 @@ async def api_refresh_account(email: str):
     acc = get_account(email)
     if not acc:
         raise HTTPException(404, "account not found")
-    client = OreateClient()
-    result = restore_session(client, acc)
-    if result is True:
-        pts = refresh_points(client, email)
-        set_account_status(email, "active")
-        client.close()
-        return {"email": email, "points": pts, "status": "active"}
-    if result is False:
-        set_account_status(email, "expired")
-        client.close()
-        return {"email": email, "points": acc["points"], "status": "expired"}
-    # network error — don't change status
-    client.close()
-    return {"email": email, "points": acc["points"], "status": acc.get("status", "unknown"), "note": "network error, status unchanged"}
+    if not try_lock_account(email):
+        raise HTTPException(409, "account is busy")
+    client = None
+    try:
+        cookies = json.loads(acc.get("cookies", "{}") or "{}")
+        client = OreateClient(browser=True, cookies=cookies)
+        result = restore_session(client, acc)
+        if result is True:
+            pts = refresh_points(client, email)
+            set_account_status(email, "active")
+            return {"email": email, "points": pts, "status": "active"}
+        if result is False:
+            set_account_status(email, "expired")
+            return {"email": email, "points": acc["points"], "status": "expired"}
+        return {
+            "email": email,
+            "points": acc["points"],
+            "status": acc.get("status", "unknown"),
+            "note": "network error, status unchanged",
+        }
+    finally:
+        try:
+            if client:
+                try:
+                    client.close()
+                except Exception as exc:
+                    log.warning("refresh browser close failed: %s", type(exc).__name__)
+        finally:
+            unlock_account(email)
 
 
 # --- API: Daily Checkin ---
@@ -144,10 +166,12 @@ def _bg_checkin(tid: str):
     try:
         results = daily_checkin_all()
         ok = [r for r in results if r.get("ok")]
-        total_pts = sum(r.get("points", 0) for r in ok)
+        total_pts = sum(r.get("points_after", 0) for r in ok)
+        earned_pts = sum(r.get("earned", 0) for r in ok)
         tasks_status[tid] = {"status": "done", "type": "checkin", "result": {
             "total": len(results), "success": len(ok), "total_points": total_pts,
-            "accounts": [{"email": r["email"], "points": r.get("points", 0)} for r in ok],
+            "earned_points": earned_pts,
+            "accounts": results,
         }}
     except Exception as e:
         tasks_status[tid] = {"status": "error", "type": "checkin", "result": {"error": str(e)}}
@@ -159,16 +183,23 @@ def _bg_checkin(tid: str):
 async def api_fission(req: FissionReq, bg: BackgroundTasks):
     tid = uuid.uuid4().hex[:8]
     tasks_status[tid] = {"status": "running", "type": "fission"}
-    bg.add_task(_bg_fission, tid, req.invite_code, req.depth)
+    bg.add_task(_bg_fission, tid, req.invite_code, req.depth, req.provider)
     return {"task_id": tid, "status": "started"}
 
 
-def _bg_fission(tid: str, invite_code: str, depth: int):
+def _bg_fission(
+    tid: str,
+    invite_code: str,
+    depth: int,
+    provider_name: str | None = None,
+):
     try:
         if invite_code:
-            results = chain_fission(invite_code, depth=depth)
+            results = chain_fission(
+                invite_code, depth=depth, provider_name=provider_name
+            )
         else:
-            results = seed_and_fission(depth=depth)
+            results = seed_and_fission(depth=depth, provider_name=provider_name)
         ok = [r for r in results if r.success]
         tasks_status[tid] = {"status": "done", "type": "fission", "result": {
             "total": len(results), "success": len(ok),
@@ -187,13 +218,7 @@ def api_upload(
 ):
     result = auto_acquire(min_points=0)
     if not result:
-        log.info("upload: pool empty, registering new account...")
-        acc = register_and_add_to_pool()
-        if not acc:
-            return JSONResponse(status_code=500, content={"error": "no account available, register failed"})
-        result = auto_acquire(min_points=0)
-    if not result:
-        return JSONResponse(status_code=500, content={"error": "no account available"})
+        return JSONResponse(status_code=503, content={"error": "no account available"})
     client, account = result
     try:
         data = file.file.read()
@@ -229,18 +254,24 @@ def _bg_video(tid: str, req: VideoReq):
     client = None
     email = None
     try:
-        result = auto_acquire(min_points=20)
+        with OreateClient() as config_client:
+            spec = resolve_video_spec(
+                config_client,
+                req.model_name,
+                req.duration,
+                req.resolution,
+                req.is_audio,
+                scene="text_or_image",
+            )
 
+        result = auto_acquire(min_points=spec.point)
         if not result:
-            log.info("pool empty, registering new account...")
-            acc = register_and_add_to_pool()
-            if not acc:
-                tasks_status[tid] = {"status": "error", "type": "video", "result": {"error": "no accounts and register failed"}}
-                return
-            result = auto_acquire(min_points=20)
-            if not result:
-                tasks_status[tid] = {"status": "error", "type": "video", "result": {"error": "freshly registered account not usable"}}
-                return
+            tasks_status[tid] = {
+                "status": "error",
+                "type": "video",
+                "result": {"error": f"no account with {spec.point} points available"},
+            }
+            return
 
         client, account = result
         email = account["email"]
@@ -256,25 +287,41 @@ def _bg_video(tid: str, req: VideoReq):
             model_name=req.model_name,
             duration=req.duration,
             ratio=req.ratio,
+            resolution=req.resolution,
+            is_audio=req.is_audio,
+            ai_type=spec.ai_type,
+            scene=spec.scene,
             image_url=req.image_url,
         )
 
         if video.success:
-            new_pts = get_remaining_points(client)
-            actual_cost = max(pts_before - new_pts, 0)
-            update_account_points(email, new_pts)
-            if new_pts < 20:
-                set_account_status(email, "exhausted")
+            warnings = [video.error] if video.error else []
+            actual_cost = spec.point
+            new_pts = None
+            try:
+                new_pts = get_remaining_points(client)
+                actual_cost = max(pts_before - new_pts, 0)
+                update_account_points(email, new_pts)
+                set_account_status(email, "exhausted" if new_pts <= 0 else "active")
+            except Exception as exc:
+                log.warning("point refresh failed after video: %s", type(exc).__name__)
+                warnings.append("remote video generated but point refresh failed")
 
-            update_video(tid, video_url=video.video_url, local_path=f"/videos/{tid}.mp4",
+            local_path = f"/videos/{tid}.mp4" if video.downloaded else ""
+            update_video(tid, video_url=video.video_url, local_path=local_path,
                          log_id=video.log_id, points_cost=actual_cost, status="done")
-            tasks_status[tid] = {"status": "done", "type": "video", "result": {
+            task_result = {
                 "video_url": video.video_url,
-                "local_path": f"/videos/{tid}.mp4",
+                "local_path": local_path,
                 "log_id": video.log_id,
                 "account": email,
                 "points_after": new_pts,
-            }}
+                "points_cost": actual_cost,
+                "downloaded": video.downloaded,
+            }
+            if warnings:
+                task_result["warning"] = "; ".join(warnings)
+            tasks_status[tid] = {"status": "done", "type": "video", "result": task_result}
         else:
             update_video(tid, status="error")
             tasks_status[tid] = {"status": "error", "type": "video", "result": {"error": video.error}}

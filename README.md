@@ -1,66 +1,140 @@
 # ThreadAI
 
-Oreate AI 视频生成协议工具 — 自动注册、裂变、签到、批量视频生成。
+OreateAI 浏览器协议工具，提供账号注册、每日签到、账号池恢复和视频生成。
 
-## 功能
+注册、密码登录和视频 SSE 会在真实 Chrome 页面环境中执行风险校验；邮箱轮询、SQLite 持久化、调度和视频下载由 Python 完成。账号 Cookie 保存在 `data.db`，后续命令会先恢复并验证登录状态。
 
-- **自动注册** — 临时邮箱自动注册 Oreate AI 账号，零人工干预
-- **裂变注册** — 链式邀请注册，Clash 节点自动轮换 IP
-- **每日签到** — 批量登录触发每日签到，积分自动累积
-- **视频生成** — 文生视频 / 图生视频，SSE 流式接收，异步批量生成
-- **账号池调度** — Cookie 持久化 + emaillogin 降级，自动选号、积分追踪
-- **前端面板** — 三页 Tab（视频生成 / 账号管理 / 生成历史），批量提交，实时状态
+## 环境要求
 
-## 快速开始
+- Python 3.10+
+- Google Chrome
+- 可访问 OreateAI、邮箱服务和视频 CDN 的网络环境
 
-```bash
-# 安装依赖
-pip install httpx cryptography fastapi uvicorn python-multipart
+安装 Python 依赖和 Playwright Chrome 支持：
 
-# 启动服务
-python -m uvicorn api.server:app --host 0.0.0.0 --port 8900
-
-# 打开浏览器
-# http://localhost:8900
+```powershell
+python -m pip install -r requirements.txt
+python -m playwright install chrome
 ```
 
-## 代理配置
+默认使用本机 Chrome channel，并以可见窗口启动。首次运行时会打开 OreateAI 首页，等浏览器风险运行时就绪后再提交请求。
 
-编辑 `config.py` 设置代理：
+## 基础配置
 
-```python
-DEFAULT_PROXY = "http://127.0.0.1:7897"  # Clash 代理端口
+配置通过环境变量读取。以下示例只使用占位值：
+
+```powershell
+$env:THREADAI_PROXY = "http://127.0.0.1:7897"
+$env:THREADAI_EMAIL_PROVIDER = "auto"
+$env:THREADAI_BROWSER_CHANNEL = "chrome"
+$env:THREADAI_BROWSER_HEADLESS = "false"
 ```
 
-裂变注册支持 Clash 节点自动轮换（需配置 `core/clash.py` 中的 API 端口和 secret）。
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `THREADAI_PROXY` | `http://127.0.0.1:7897` | 注册、账号恢复和视频请求使用的代理；设为空字符串表示直连 |
+| `THREADAI_EMAIL_PROVIDER` | `auto` | `auto`、`luckmail`、`mailtm`、`linshiyouxiang`、`guerrilla` 或 `1secmail` |
+| `THREADAI_ALLOW_PLUS_EMAIL` | `false` | 是否允许邮箱本地部分包含 `+`；成功 HAR 显示此类地址会被拒绝 |
+| `THREADAI_BROWSER_CHANNEL` | `chrome` | Playwright 浏览器 channel |
+| `THREADAI_BROWSER_HEADLESS` | `false` | 是否无头运行 Chrome |
+| `THREADAI_BROWSER_TIMEOUT_MS` | `30000` | 页面和浏览器操作超时 |
+| `THREADAI_BROWSER_RISK_TIMEOUT_MS` | `5000` | 单次浏览器风险令牌超时 |
 
-## 项目结构
+CLI 的 `--proxy` 省略时会保留 `THREADAI_PROXY` 配置；显式传入时仅覆盖本次命令。
 
+## LuckMail
+
+LuckMail provider 从私有邮箱库存中选择启用的 `ms_imap` 基础邮箱，并通过 Microsoft OAuth + IMAP 读取 OreateAI 验证链接。邮箱需为不带 `+` 别名的独立地址。
+
+启用方式：
+
+```powershell
+$env:THREADAI_EMAIL_PROVIDER = "luckmail"
+$env:LUCKMAIL_API_KEY = "<your-api-key>"
+$env:LUCKMAIL_API_SECRET = "<your-api-secret>"
 ```
-threadAi/
-├── config.py              # 全局配置
-├── main.py                # CLI 入口
-├── requirements.txt       # 依赖
-├── api/
-│   └── server.py          # FastAPI 服务
-├── core/
-│   ├── client.py          # HTTP 客户端
-│   ├── crypto.py          # RSA 加密
-│   ├── db.py              # SQLite 持久化
-│   ├── pool.py            # 账号池调度
-│   ├── clash.py           # Clash 节点切换
-│   └── fingerprint.py     # 设备指纹
-├── modules/
-│   ├── register.py        # 注册流程
-│   ├── login.py           # 登录 + 签到
-│   ├── fission.py         # 裂变注册
-│   ├── video.py           # 视频生成 (SSE)
-│   ├── upload.py          # 图片上传 (GCS)
-│   └── email_provider.py  # 临时邮箱
-├── static/
-│   └── index.html         # 前端面板
-└── videos/                # 生成的视频
+
+`LUCKMAIL_API_SECRET` 仅在服务端要求签名时配置。不要将实际凭据写入仓库或命令示例。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LUCKMAIL_BASE_URL` | `https://mails.luckyous.com` | LuckMail API 根地址 |
+| `LUCKMAIL_PROXY` | 回退到 `THREADAI_PROXY` | LuckMail API 与 Microsoft token 请求代理 |
+| `LUCKMAIL_IMAP_PROXY` | 回退到 `THREADAI_PROXY` | IMAP 连接代理，支持 HTTP/SOCKS |
+| `LUCKMAIL_HTTP_RETRIES` | `3` | API 请求次数 |
+| `LUCKMAIL_INVENTORY_CACHE_SECONDS` | `60` | 邮箱库存缓存时间 |
+| `LUCKMAIL_POLL_INTERVAL` | `5` | 收件箱轮询间隔 |
+| `LUCKMAIL_RECENT_SECONDS` | `900` | 只接受该时间窗口内的邮件 |
+| `LUCKMAIL_IMAP_HOSTS` | Outlook 两个常用 IMAP host | 逗号分隔的 IMAP host 列表 |
+| `LUCKMAIL_IMAP_LAST_N` | `30` | 每次检查最近邮件数量 |
+| `LUCKMAIL_REQUIRE_RECIPIENT_MATCH` | `true` | 验证邮件收件人必须与当前邮箱一致 |
+
+也可以只覆盖一次注册的 provider：
+
+```powershell
+python main.py register --provider luckmail
 ```
+
+## CLI
+
+注册会启动浏览器环境，完成后自动把账号、Cookie 和积分写入 SQLite：
+
+```powershell
+# 使用 THREADAI_EMAIL_PROVIDER
+python main.py register
+
+# 指定 provider
+python main.py register --provider luckmail
+
+# 指定已有邮箱，验证邮件到达后手动输入 tokenID
+python main.py register --email "user@example.com"
+```
+
+查询账号真实登录状态和积分。账号选择器可使用邮箱，或使用从 0 开始的账号下标；下标按最新账号优先排列：
+
+```powershell
+python main.py check 0
+python main.py check "user@example.com"
+```
+
+为账号库中的全部账号恢复浏览器会话并领取每日 first-use 积分：
+
+```powershell
+python main.py checkin
+```
+
+生成视频时可自动选择积分最高的可用账号，也可用 `--account` 固定账号：
+
+```powershell
+python main.py video "雨夜城市街道的电影镜头" --save videos/demo.mp4
+python main.py video "海边日落" --account 0 --resolution 720 --ratio 16:9
+python main.py video "产品缓慢旋转" --account "user@example.com" --no-audio
+```
+
+提交前会读取服务端模型配置并计算实际积分成本。常用选项：
+
+- `--model`：模型名称，默认 `Seedance 2.0 Mini`
+- `--duration`：`5` 或 `10` 秒
+- `--resolution`：例如 `480` 或 `720`
+- `--ratio`：例如 `16:9`、`9:16` 或 `1:1`
+- `--no-audio`：关闭音频
+- `--image-url`：已上传参考图的 objectPath
+- `--save`：生成后下载到本地路径
+
+查看完整帮助：
+
+```powershell
+python main.py --help
+python main.py video --help
+```
+
+## Web 服务
+
+```powershell
+python -m uvicorn api.server:app --host 127.0.0.1 --port 8900
+```
+
+打开 `http://127.0.0.1:8900`。Web 服务与 CLI 共用 `data.db`、浏览器配置、邮箱 provider 和代理设置。
 
 ## API
 
@@ -71,30 +145,34 @@ threadAi/
 | POST | `/api/register` | 注册单号 |
 | POST | `/api/fission` | 裂变注册 |
 | POST | `/api/checkin` | 全部签到 |
-| POST | `/api/accounts/{email}/refresh` | 刷新账号 |
+| POST | `/api/accounts/{email}/refresh` | 恢复账号并刷新积分 |
 | GET | `/api/videos` | 视频历史 |
 | POST | `/api/video` | 生成视频 |
 | POST | `/api/upload` | 上传参考图 |
-| GET | `/api/task/{id}` | 查询任务状态 |
+| GET | `/api/task/{id}` | 查询后台任务状态 |
 
-## 支持模型
+## 项目结构
 
-| 模型 | 真人 | 最低积分 (5s) | 说明 |
-|------|:----:|:----:|------|
-| Pixverse V5 | ✓ | 5 | 潮流特效极速生成 |
-| Seedance 1.5 Pro | ✓ | 7 | 电影级微表情 |
-| Kling 2.6 | ✓ | 15 | 高难动作与高保真配音 |
-| Seedance 2.0 Mini | ✗ | 20 | 更快速度，不支持真人 |
-| Seedance 2.0 Fast | ✗ | 25 | 旗舰快速渲染，不支持真人 |
-| Kling 2.5 | ✓ | 25 | 经典稳定首选 |
-| Kling 3.0 | ✓ | 30 | 电影感超长分镜 |
-| Kling 3.0 Omni | ✓ | 30 | 角色道具一致性 |
-| Wan 2.5 / 2.6 / 2.7 | ✓ | 30 | 写实画面 / 拟真口型 |
-| Seedance 2.0 | ✗ | 40 | 旗舰多模态，不支持真人 |
-| Kling o1 | ✓ | 40 | 文本指令视频编辑 |
-| Veo 3 / 3.1 | ✓ | 100 | 极高精度超写实 |
+```text
+threadAi/
+|-- config.py                 # 环境变量和全局配置
+|-- main.py                   # CLI 入口
+|-- requirements.txt          # Python 依赖
+|-- api/server.py             # FastAPI 服务
+|-- core/browser_runtime.py   # Chrome/Playwright 风险请求运行时
+|-- core/client.py            # 浏览器与 HTTP 会话封装
+|-- core/db.py                # SQLite 持久化
+|-- core/pool.py              # 账号锁、恢复和调度
+|-- modules/email_provider.py # 邮箱 provider 工厂
+|-- modules/luckmail.py       # LuckMail + Microsoft OAuth/IMAP
+|-- modules/register.py       # 注册与邮箱确认
+|-- modules/login.py          # 登录与签到
+|-- modules/video.py          # 模型定价、SSE 和视频下载
+|-- static/index.html         # Web 面板
+`-- videos/                   # 本地视频目录
+```
 
-> 积分随分辨率、时长、音频增加。详细定价通过 `/oreate/aivideo/getmodelconfigv3` 接口动态获取。
+`data.db`、`accounts.jsonl` 以及浏览器会话数据包含账号凭据或登录状态，应保留在本机并避免提交到版本库。
 
 ## License
 

@@ -8,13 +8,19 @@ data.db-shm
 data.db-wal
 accounts.jsonl
 videos/*.mp4
-test_*.py
 test_*.mp4
 test_*.jpg
 test_*.png
 
 # HAR captures
 .playwright-mcp/
+*.har
+*.zip
+
+# Local work notes
+task_plan.md
+findings.md
+progress.md
 
 # IDE
 .vscode/

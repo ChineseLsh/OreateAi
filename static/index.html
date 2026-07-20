@@ -26,13 +26,25 @@ a{color:var(--accent2);text-decoration:none}a:hover{text-decoration:underline}
 .tab.active{color:var(--accent2);border-color:var(--accent)}
 
 .main{flex:1;padding:24px;max-width:1400px;margin:0 auto;width:100%}
-.page{display:none}.page.active{display:block}
+.page{display:none;width:100%}.page.active{display:block}
 
 /* Cards */
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
 .card-title{font-size:14px;font-weight:600;margin-bottom:16px;color:var(--text3)}
 .row{display:grid;gap:16px}.row-2{grid-template-columns:1fr 1fr}.row-3{grid-template-columns:1fr 1fr 1fr}
 @media(max-width:900px){.row-2,.row-3{grid-template-columns:1fr}}
+@media(max-width:600px){
+  .topbar{height:auto;min-height:56px;padding:9px 14px;gap:10px}
+  .topbar h1{font-size:16px;white-space:nowrap}
+  .stats-bar{gap:7px;margin-left:auto}
+  .stat-item{min-width:31px}
+  .stat-item .val{font-size:16px}
+  .stat-item .lbl{font-size:9px;white-space:nowrap}
+  .tabs{padding:0 8px}
+  .tab{padding:12px 13px;white-space:nowrap}
+  .main{padding:16px}
+  .card{padding:16px}
+}
 
 /* Form */
 .field{margin-bottom:14px}
@@ -40,6 +52,8 @@ a{color:var(--accent2);text-decoration:none}a:hover{text-decoration:underline}
 input,textarea,select{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;width:100%;outline:none;transition:border .2s;font-family:inherit}
 input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 textarea{resize:vertical;min-height:80px;line-height:1.5}
+.check-option{height:38px;display:flex!important;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:0 12px;margin:0!important;color:var(--text3)!important}
+.check-option input{width:16px;height:16px;accent-color:var(--accent)}
 
 /* Buttons */
 .btn{padding:9px 20px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s;display:inline-flex;align-items:center;gap:6px}
@@ -163,6 +177,10 @@ tr:hover td{background:rgba(99,102,241,.03)}
               <div class="field"><label>时长</label><select id="v-duration"><option value="5">5秒</option><option value="10">10秒</option></select></div>
               <div class="field"><label>比例</label><select id="v-ratio"><option>16:9</option><option>9:16</option><option>1:1</option></select></div>
             </div>
+            <div class="row row-2" style="margin-bottom:14px">
+              <div class="field"><label>分辨率</label><select id="v-resolution"><option value="480">480P</option><option value="720" selected>720P</option><option value="1080">1080P</option></select></div>
+              <div class="field"><label>音频</label><label class="check-option"><input type="checkbox" id="v-audio" checked><span>生成音频</span></label></div>
+            </div>
             <button class="btn btn-primary" onclick="doVideoSubmit()" id="btn-video">提交生成</button>
           </div>
         </div>
@@ -181,6 +199,14 @@ tr:hover td{background:rgba(99,102,241,.03)}
       <div class="card">
         <div class="card-title">操作</div>
         <div class="btn-group" style="margin-bottom:12px">
+          <select id="reg-provider" style="width:170px" aria-label="邮箱供应商">
+            <option value="auto">自动邮箱</option>
+            <option value="luckmail">LuckMail</option>
+            <option value="mailtm">mail.tm</option>
+            <option value="linshiyouxiang">临时邮箱网</option>
+            <option value="guerrilla">Guerrilla Mail</option>
+            <option value="1secmail">1secmail</option>
+          </select>
           <button class="btn btn-primary" onclick="doRegister()" id="btn-reg">注册单号</button>
           <button class="btn btn-green" onclick="doFission()" id="btn-fission">批量裂变</button>
           <input type="number" id="fission-depth" value="3" min="1" max="20" style="width:60px">
@@ -191,8 +217,8 @@ tr:hover td{background:rgba(99,102,241,.03)}
       <div class="card">
         <div class="card-title">账号列表</div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>#</th><th>邮箱</th><th>密码</th><th>积分</th><th>状态</th><th>最近使用</th><th>操作</th></tr></thead>
-          <tbody id="acc-table"><tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">加载中...</td></tr></tbody></table>
+          <table><thead><tr><th>#</th><th>邮箱</th><th>积分</th><th>状态</th><th>最近使用</th><th>操作</th></tr></thead>
+          <tbody id="acc-table"><tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text2)">加载中...</td></tr></tbody></table>
         </div>
       </div>
     </div>
@@ -227,11 +253,20 @@ tr:hover td{background:rgba(99,102,241,.03)}
 
 <script>
 const S = {active:'可用',exhausted:'耗尽',expired:'过期',done:'完成',generating:'生成中',error:'失败',pending:'排队中'};
+const CHECKIN_STATUS = {claimed:'领取成功',already_claimed:'今日已签到',claim_failed:'领取失败',login_failed:'登录失败',busy:'忙碌',error:'异常'};
 const NO_HUMAN = ['Seedance 2.0 Mini','Seedance 2.0','Seedance 2.0 Fast'];
 let allVideos = [], hisFilter = '', activeTasks = {};
 
 function ts2str(ts){ return ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-' }
 function badgeCls(s){ return s==='active'||s==='done'?'badge-green':s==='exhausted'||s==='generating'?s==='generating'?'badge-purple':'badge-yellow':s==='error'||s==='expired'?'badge-red':'badge-gray' }
+function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function safeUrl(value){try{const url=new URL(String(value||''),location.origin);return ['http:','https:'].includes(url.protocol)?url.href:''}catch(e){return ''}}
+async function apiFetch(url,options){
+  const response=await fetch(url,options);
+  let data={};try{data=await response.json()}catch(e){}
+  if(!response.ok) throw new Error(data.detail||data.error||`HTTP ${response.status}`);
+  return data;
+}
 
 // Tabs
 function switchTab(id){
@@ -253,37 +288,42 @@ async function fetchStats(){
 
 // Accounts
 async function fetchAccounts(){
-  try{ const accs=await(await fetch('/api/accounts')).json();
+  try{ const accs=await apiFetch('/api/accounts');
     const tb=document.getElementById('acc-table');
-    if(!accs.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">暂无账号</td></tr>';return}
+    if(!accs.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text2)">暂无账号</td></tr>';return}
     tb.innerHTML=accs.map((a,i)=>`<tr>
-      <td>${i+1}</td><td>${a.email}</td><td><span class="mono">${a.password}</span></td>
+      <td>${i+1}</td><td>${esc(a.email)}</td>
       <td><strong>${a.points}</strong></td>
-      <td><span class="badge ${badgeCls(a.status)}">${S[a.status]||a.status}</span></td>
+      <td><span class="badge ${badgeCls(a.status)}">${esc(S[a.status]||a.status)}</span></td>
       <td>${ts2str(a.last_used)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="refreshAccount('${a.email}')">刷新</button></td>
+      <td><button class="btn btn-ghost btn-sm" data-refresh-email="${esc(a.email)}">刷新</button></td>
     </tr>`).join('');
+    tb.querySelectorAll('[data-refresh-email]').forEach(button=>button.addEventListener('click',()=>refreshAccount(button.dataset.refreshEmail)));
   }catch(e){}
 }
 
 // Videos
 async function fetchVideos(){
-  try{ allVideos=await(await fetch('/api/videos')).json(); renderHistory(); }catch(e){}
+  try{ allVideos=await apiFetch('/api/videos'); renderHistory(); }catch(e){}
 }
 function renderHistory(){
   const tb=document.getElementById('his-table');
   const list=hisFilter?allVideos.filter(v=>v.status===hisFilter):allVideos;
   if(!list.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text2)">暂无记录</td></tr>';return}
   tb.innerHTML=list.map(v=>{
-    const act=v.status==='done'&&v.local_path?`<a href="#" onclick="openModal('${v.local_path}','${v.prompt.replace(/'/g,"\\'")}');return false">播放</a> · <a href="${v.video_url}" target="_blank">下载</a>`:'-';
+    const localPath=safeUrl(v.local_path), videoUrl=safeUrl(v.video_url);
+    const play=localPath?`<button class="btn btn-ghost btn-sm" data-play-src="${esc(localPath)}" data-play-prompt="${esc(v.prompt)}">播放</button>`:'';
+    const download=videoUrl?`<a href="${esc(videoUrl)}" target="_blank" rel="noopener">下载</a>`:'';
+    const act=v.status==='done'?(play&&download?`${play} · ${download}`:play||download||'-'):'-';
     return `<tr>
       <td>${ts2str(v.created_at)}</td>
-      <td><span class="truncate" title="${v.prompt}">${v.prompt}</span></td>
-      <td>${v.model}</td><td class="mono">${(v.account_email||'').split('@')[0]}</td>
+      <td><span class="truncate" title="${esc(v.prompt)}">${esc(v.prompt)}</span></td>
+      <td>${esc(v.model)}</td><td class="mono">${esc((v.account_email||'').split('@')[0])}</td>
       <td>${v.points_cost}</td>
-      <td><span class="badge ${badgeCls(v.status)}">${S[v.status]||v.status}</span></td>
+      <td><span class="badge ${badgeCls(v.status)}">${esc(S[v.status]||v.status)}</span></td>
       <td>${act}</td></tr>`;
   }).join('');
+  tb.querySelectorAll('[data-play-src]').forEach(button=>button.addEventListener('click',()=>openModal(button.dataset.playSrc,button.dataset.playPrompt)));
 }
 function filterHis(s){
   hisFilter=s;
@@ -316,16 +356,14 @@ async function handleUpload(input){
   pv.innerHTML='<span class="spin"></span> 上传中...';
   try{
     const form=new FormData(); form.append('file',file); form.append('filename',file.name);
-    const r=await fetch('/api/upload',{method:'POST',body:form});
-    if(!r.ok){pv.innerHTML='<span class="upload-hint" style="color:var(--red)">上传失败</span>';return}
-    const d=await r.json();
+    const d=await apiFetch('/api/upload',{method:'POST',body:form});
     if(d.url){
       document.getElementById('v-image-url').value=d.url;
-      const url=d.preview||('https://cdn.oreateai.com/'+d.url);
-      pv.innerHTML=`<img src="${url}"><br><span class="upload-hint">${file.name} · <a href="#" onclick="clearUpload();return false" style="color:var(--red)">移除</a></span>`;
+      const url=safeUrl(d.preview||('https://cdn.oreateai.com/'+d.url));
+      pv.innerHTML=`<img src="${esc(url)}"><br><span class="upload-hint">${esc(file.name)} · <a href="#" onclick="clearUpload();return false" style="color:var(--red)">移除</a></span>`;
       checkModelCompat();
     }
-  }catch(e){pv.innerHTML='<span class="upload-hint" style="color:var(--red)">上传异常</span>'}
+  }catch(e){pv.innerHTML=`<span class="upload-hint" style="color:var(--red)">${esc(e.message||'上传异常')}</span>`}
 }
 function clearUpload(){
   document.getElementById('v-image-url').value='';
@@ -337,7 +375,7 @@ function clearUpload(){
 // Log
 function addLog(id,msg,cls='info'){
   const el=document.getElementById(id);
-  el.innerHTML+=`<div class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+  el.insertAdjacentHTML('beforeend',`<div class="${cls}">[${new Date().toLocaleTimeString()}] ${esc(msg)}</div>`);
   el.scrollTop=el.scrollHeight;
 }
 
@@ -351,12 +389,13 @@ function renderQueue(){
     const t=activeTasks[tid];
     const st=t.status==='done'?'完成':t.status==='error'?'失败':'生成中';
     const cls=badgeCls(t.status==='running'?'generating':t.status);
-    let body=`<div class="tc-prompt">${t.prompt||''}</div><div class="tc-meta"><span>${t.model||''}</span><span>${t.duration||5}秒</span></div>`;
+    let body=`<div class="tc-prompt">${esc(t.prompt)}</div><div class="tc-meta"><span>${esc(t.model)}</span><span>${t.duration||5}秒</span></div>`;
     if(t.status==='done'&&t.result){
-      body+=`<video controls src="${t.result.local_path||t.result.video_url}"></video>
-        <div style="margin-top:6px;font-size:11px"><a href="${t.result.video_url}" target="_blank">下载原始视频</a></div>`;
+      const playback=safeUrl(t.result.local_path||t.result.video_url), original=safeUrl(t.result.video_url);
+      body+=playback?`<video controls src="${esc(playback)}"></video>`:'';
+      body+=original?`<div style="margin-top:6px;font-size:11px"><a href="${esc(original)}" target="_blank" rel="noopener">下载原始视频</a></div>`:'';
     }
-    if(t.status==='error') body+=`<div style="color:var(--red);font-size:11px;margin-top:4px">失败: ${(t.result?.error||'').toString().slice(0,80)}</div>`;
+    if(t.status==='error') body+=`<div style="color:var(--red);font-size:11px;margin-top:4px">失败: ${esc((t.result?.error||'').toString().slice(0,80))}</div>`;
     return `<div class="task-card"><div class="tc-status"><span class="badge ${cls}">${st}</span></div>${body}</div>`;
   }).join('');
 }
@@ -365,7 +404,7 @@ async function pollTaskAsync(tid){
   while(true){
     await new Promise(r=>setTimeout(r,3000));
     try{
-      const d=await(await fetch('/api/task/'+tid)).json();
+      const d=await apiFetch('/api/task/'+encodeURIComponent(tid));
       if(d.status==='done'){activeTasks[tid].status='done';activeTasks[tid].result=d.result;renderQueue();fetchStats();fetchVideos();return}
       if(d.status==='error'){activeTasks[tid].status='error';activeTasks[tid].result=d.result;renderQueue();fetchVideos();return}
     }catch(e){return}
@@ -380,27 +419,31 @@ async function doVideoSubmit(){
   if(img&&NO_HUMAN.includes(model)){alert(model+' 不支持真人参考图，请切换模型或移除图片');return}
   const dur=parseInt(document.getElementById('v-duration').value);
   const ratio=document.getElementById('v-ratio').value;
+  const resolution=document.getElementById('v-resolution').value;
+  const isAudio=document.getElementById('v-audio').checked;
 
+  let submitted=0;
   for(const prompt of lines){
     try{
-      const d=await(await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({prompt,model_name:model,duration:dur,ratio,image_url:img})})).json();
-      activeTasks[d.task_id]={status:'running',prompt,model,duration:dur};
+      const d=await apiFetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({prompt,model_name:model,duration:dur,ratio,resolution,is_audio:isAudio,image_url:img})});
+      activeTasks[d.task_id]={status:'running',prompt,model,duration:dur,resolution,isAudio};
       renderQueue();
       pollTaskAsync(d.task_id);
-    }catch(e){}
+      submitted++;
+    }catch(e){alert('提交失败: '+e.message)}
   }
-  document.getElementById('v-prompt').value='';
+  if(submitted) document.getElementById('v-prompt').value='';
   fetchStats();
 }
 
 // Account actions
 async function refreshAccount(email){
   try{
-    const d=await(await fetch('/api/accounts/'+encodeURIComponent(email)+'/refresh',{method:'POST'})).json();
+    const d=await apiFetch('/api/accounts/'+encodeURIComponent(email)+'/refresh',{method:'POST'});
     addLog('reg-log',`${email}: ${d.points}积分, ${S[d.status]||d.status}`,d.status==='active'?'ok':'err');
     fetchAccounts();fetchStats();
-  }catch(e){addLog('reg-log','刷新失败','err')}
+  }catch(e){addLog('reg-log','刷新失败: '+e.message,'err')}
 }
 
 async function pollBg(tid,logId,onDone){
@@ -408,7 +451,7 @@ async function pollBg(tid,logId,onDone){
   while(true){
     await new Promise(r=>setTimeout(r,3000)); n++;
     try{
-      const d=await(await fetch('/api/task/'+tid)).json();
+      const d=await apiFetch('/api/task/'+encodeURIComponent(tid));
       if(d.status==='done'){onDone(d);return}
       if(d.status==='error'){addLog(logId,'失败: '+(d.result?.error||''),'err');return}
       if(n%5===0) addLog(logId,'处理中...','info');
@@ -420,38 +463,47 @@ async function doRegister(){
   const btn=document.getElementById('btn-reg');btn.disabled=true;btn.textContent='注册中...';
   addLog('reg-log','正在注册...','info');
   try{
-    const d=await(await fetch('/api/register',{method:'POST'})).json();
+    const provider=document.getElementById('reg-provider').value;
+    const d=await apiFetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider})});
     await pollBg(d.task_id,'reg-log',res=>{
       addLog('reg-log',`注册成功: ${res.result.email} (${res.result.points}积分)`,'ok');
       fetchAccounts();fetchStats();
     });
-  }catch(e){addLog('reg-log','注册失败','err')}
+  }catch(e){addLog('reg-log','注册失败: '+e.message,'err')}
   btn.disabled=false;btn.textContent='注册单号';
 }
 async function doFission(){
   const btn=document.getElementById('btn-fission');btn.disabled=true;btn.textContent='裂变中...';
   const depth=parseInt(document.getElementById('fission-depth').value)||3;
+  const provider=document.getElementById('reg-provider').value;
   addLog('reg-log',`开始裂变 (${depth}层)...`,'info');
   try{
-    const d=await(await fetch('/api/fission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({depth})})).json();
+    const d=await apiFetch('/api/fission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({depth,provider})});
     await pollBg(d.task_id,'reg-log',res=>{
       addLog('reg-log',`裂变完成: ${res.result.success}/${res.result.total}`,'ok');
       (res.result.accounts||[]).forEach(a=>addLog('reg-log',`  + ${a.email} (${a.points}积分)`,'ok'));
       fetchAccounts();fetchStats();
     });
-  }catch(e){addLog('reg-log','裂变失败','err')}
+  }catch(e){addLog('reg-log','裂变失败: '+e.message,'err')}
   btn.disabled=false;btn.textContent='批量裂变';
 }
 async function doCheckin(){
   const btn=document.getElementById('btn-checkin');btn.disabled=true;btn.textContent='签到中...';
   addLog('reg-log','正在批量签到...','info');
   try{
-    const d=await(await fetch('/api/checkin',{method:'POST'})).json();
+    const d=await apiFetch('/api/checkin',{method:'POST'});
     await pollBg(d.task_id,'reg-log',res=>{
-      addLog('reg-log',`签到完成: ${res.result.success}/${res.result.total}, 总积分 ${res.result.total_points}`,'ok');
+      addLog('reg-log',`签到完成: ${res.result.success}/${res.result.total}, 新增 ${res.result.earned_points} 积分`,'ok');
+      (res.result.accounts||[]).forEach(account=>{
+        const label=CHECKIN_STATUS[account.status]||account.status;
+        const detail=account.ok
+          ? `${account.email}: ${label}, ${account.points_before} -> ${account.points_after} (+${account.earned||0})`
+          : `${account.email}: ${label} (${account.error||'unknown error'})`;
+        addLog('reg-log',detail,account.ok?'ok':'err');
+      });
       fetchAccounts();fetchStats();
     });
-  }catch(e){addLog('reg-log','签到失败','err')}
+  }catch(e){addLog('reg-log','签到失败: '+e.message,'err')}
   btn.disabled=false;btn.textContent='全部签到';
 }
 

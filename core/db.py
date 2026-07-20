@@ -4,13 +4,24 @@ import json
 import sqlite3
 import time
 import threading
+from functools import wraps
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data.db"
-_lock = threading.Lock()
+_lock = threading.RLock()
 _conn_cache: sqlite3.Connection | None = None
 
 
+def _serialized(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with _lock:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+@_serialized
 def _conn() -> sqlite3.Connection:
     global _conn_cache
     if _conn_cache is None:
@@ -20,6 +31,7 @@ def _conn() -> sqlite3.Connection:
     return _conn_cache
 
 
+@_serialized
 def init_db():
     c = _conn()
     c.executescript("""
@@ -54,6 +66,7 @@ def init_db():
     c.commit()
 
 
+@_serialized
 def migrate_jsonl():
     jsonl = Path(__file__).resolve().parent.parent / "accounts.jsonl"
     if not jsonl.exists():
@@ -78,10 +91,10 @@ def migrate_jsonl():
 
 # --- Account ops ---
 
+@_serialized
 def save_account(email: str, password: str, points: int, invite_code: str, cookies: dict | None = None):
     c = _conn()
-    with _lock:
-        c.execute(
+    c.execute(
         """INSERT OR REPLACE INTO accounts (email, password, points, invite_code, cookies, status, created_at, last_used, locked)
            VALUES (?,?,?,?,?,?,?,0,0)""",
         (email, password, points, invite_code, json.dumps(cookies or {}), "active", int(time.time())),
@@ -89,42 +102,60 @@ def save_account(email: str, password: str, points: int, invite_code: str, cooki
     c.commit()
 
 
+@_serialized
 def update_account_cookies(email: str, cookies: dict):
     c = _conn()
     c.execute("UPDATE accounts SET cookies=? WHERE email=?", (json.dumps(cookies), email))
     c.commit()
 
 
+@_serialized
 def update_account_points(email: str, points: int):
     c = _conn()
     c.execute("UPDATE accounts SET points=?, last_used=? WHERE email=?", (points, int(time.time()), email))
     c.commit()
 
 
+@_serialized
 def set_account_status(email: str, status: str):
     c = _conn()
     c.execute("UPDATE accounts SET status=? WHERE email=?", (status, email))
     c.commit()
 
 
+@_serialized
 def lock_account(email: str):
     c = _conn()
     c.execute("UPDATE accounts SET locked=1 WHERE email=?", (email,))
     c.commit()
 
 
+@_serialized
+def try_lock_account(email: str) -> bool:
+    c = _conn()
+    changed = c.execute(
+        "UPDATE accounts SET locked=1 WHERE email=? AND locked=0",
+        (email,),
+    ).rowcount
+    c.commit()
+    return changed == 1
+
+
+@_serialized
 def unlock_account(email: str):
     c = _conn()
     c.execute("UPDATE accounts SET locked=0 WHERE email=?", (email,))
     c.commit()
 
 
+@_serialized
 def get_account(email: str) -> dict | None:
     c = _conn()
     row = c.execute("SELECT * FROM accounts WHERE email=?", (email,)).fetchone()
     return dict(row) if row else None
 
 
+@_serialized
 def get_best_account(min_points: int = 20) -> dict | None:
     c = _conn()
     row = c.execute(
@@ -134,12 +165,38 @@ def get_best_account(min_points: int = 20) -> dict | None:
     return dict(row) if row else None
 
 
+@_serialized
+def acquire_best_account(min_points: int = 20) -> dict | None:
+    c = _conn()
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        row = c.execute(
+            "SELECT * FROM accounts WHERE status='active' AND locked=0 AND points>=? "
+            "ORDER BY points DESC, last_used ASC LIMIT 1",
+            (min_points,),
+        ).fetchone()
+        if row is None:
+            c.commit()
+            return None
+        changed = c.execute(
+            "UPDATE accounts SET locked=1 WHERE email=? AND locked=0",
+            (row["email"],),
+        ).rowcount
+        c.commit()
+        return dict(row) if changed == 1 else None
+    except Exception:
+        c.rollback()
+        raise
+
+
+@_serialized
 def list_accounts() -> list[dict]:
     c = _conn()
     rows = c.execute("SELECT * FROM accounts ORDER BY created_at DESC").fetchall()
     return [dict(r) for r in rows]
 
 
+@_serialized
 def count_active_accounts(min_points: int = 20) -> int:
     c = _conn()
     row = c.execute("SELECT COUNT(*) as n FROM accounts WHERE status='active' AND points>=?", (min_points,)).fetchone()
@@ -148,6 +205,7 @@ def count_active_accounts(min_points: int = 20) -> int:
 
 # --- Video ops ---
 
+@_serialized
 def save_video(task_id: str, account_email: str, prompt: str, model: str, duration: int, ratio: str, status: str = "pending"):
     c = _conn()
     c.execute(
@@ -158,6 +216,7 @@ def save_video(task_id: str, account_email: str, prompt: str, model: str, durati
     c.commit()
 
 
+@_serialized
 def update_video(task_id: str, **fields):
     c = _conn()
     sets = ", ".join(f"{k}=?" for k in fields)
@@ -166,12 +225,14 @@ def update_video(task_id: str, **fields):
     c.commit()
 
 
+@_serialized
 def list_videos(limit: int = 50) -> list[dict]:
     c = _conn()
     rows = c.execute("SELECT * FROM videos ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 
+@_serialized
 def get_video(task_id: str) -> dict | None:
     c = _conn()
     row = c.execute("SELECT * FROM videos WHERE task_id=?", (task_id,)).fetchone()
@@ -180,6 +241,7 @@ def get_video(task_id: str) -> dict | None:
 
 # --- Stats ---
 
+@_serialized
 def get_stats() -> dict:
     c = _conn()
     accs = c.execute("SELECT COUNT(*) as n, COALESCE(SUM(points),0) as pts FROM accounts").fetchone()

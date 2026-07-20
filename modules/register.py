@@ -1,12 +1,12 @@
 """注册模块 — 完整注册流程 getticket → emailsignupin → poll verify → confirm"""
 
-import time
 import logging
+import time
 
-from config import PASSPORT_API, BASE_URL
+from config import ALLOW_PLUS_EMAIL, PASSPORT_API, BASE_URL
 from core.client import OreateClient
 from core.crypto import encrypt_password
-from core.fingerprint import generate_jt, random_password
+from core.fingerprint import random_password
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,15 @@ def get_ticket(client: OreateClient) -> tuple[str, str]:
     return ticket, pk
 
 
+def validate_registration_email(email: str) -> str:
+    value = (email or "").strip()
+    if not value or "@" not in value or value.startswith("@") or value.endswith("@"):
+        raise ValueError("invalid registration email")
+    if "+" in value.split("@", 1)[0] and not ALLOW_PLUS_EMAIL:
+        raise ValueError("plus-address aliases are rejected by OreateAI")
+    return value
+
+
 def email_signup(
     client: OreateClient,
     email: str,
@@ -48,13 +57,14 @@ def email_signup(
         "email": email,
         "ticketID": ticket_id,
         "password": encrypted_pwd,
-        "fissionCode": fission_code,
-        "inviteCode": invite_code,
-        "jt": generate_jt(),
     }
     if fr != "main":
-        body["plat"] = "wap"
-    resp = client.post(f"{PASSPORT_API}/emailsignupin", json=body)
+        body.update({
+            "plat": "wap",
+            "fissionCode": fission_code,
+            "inviteCode": invite_code,
+        })
+    resp = client.risk_post(f"{PASSPORT_API}/emailsignupin", body)
     log.info(f"signup resp: code={resp['status']['code']}, isRegister={resp['data'].get('isRegister')}")
     return resp
 
@@ -104,7 +114,7 @@ def email_register_confirm(
         "fr": fr,
         "fissionCode": fission_code,
         "inviteCode": invite_code,
-        "jt": generate_jt(),
+        "jt": "",
     }
     resp = client.post(f"{PASSPORT_API}/emailregisterconfirm", json=body)
     log.info(f"confirm resp: isLogin={resp['data'].get('isLogin')}")
@@ -137,6 +147,7 @@ def register(
     email = email_provider.address
 
     try:
+        email = validate_registration_email(email)
         ticket_id, pk = get_ticket(client)
         encrypted_pwd = encrypt_password(password, pk)
         signup_resp = email_signup(client, email, encrypted_pwd, ticket_id, fr=fr, invite_code=invite_code)
@@ -149,6 +160,8 @@ def register(
 
         log.info("等待邮箱验证...")
         email_addr, token_id = email_provider.wait_for_verification_link()
+        if email_addr.lower() != email.lower():
+            return RegisterResult(email, password, False, error="verification email mismatch")
 
         confirm_ref = f"{BASE_URL}/home/index/zh?email={email}"
         if fr != "main":
@@ -162,11 +175,23 @@ def register(
         if not confirm_resp["data"].get("isLogin"):
             return RegisterResult(email, password, False, error="confirm 失败")
 
-        time.sleep(2)
-        points = get_points(client)
-        inv_code = get_invite_code(client)
+        userinfo = client.get(f"{BASE_URL}/oreate/user/getuserinfo")
+        basic_info = userinfo.get("data", {}).get("basicInfo", {})
+        if userinfo.get("status", {}).get("code") != 0 or not basic_info.get("isLogin"):
+            return RegisterResult(email, password, False, error="confirmed session is not logged in")
 
-        cookies = {c.name: c.value for c in client.session.cookies.jar}
+        points = 0
+        inv_code = ""
+        try:
+            points = get_points(client)
+        except Exception as exc:
+            log.warning("points lookup failed after registration: %s", type(exc).__name__)
+        try:
+            inv_code = get_invite_code(client)
+        except Exception as exc:
+            log.warning("invite lookup failed after registration: %s", type(exc).__name__)
+
+        cookies = client.export_cookies()
         try:
             from core.db import save_account
             save_account(email, password, points, inv_code, cookies)
