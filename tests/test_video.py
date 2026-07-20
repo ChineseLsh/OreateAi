@@ -45,6 +45,7 @@ class _SSEClient:
         self.bid = "browser-id"
         self.body = None
         self.referer = ""
+        self.risk_prepared = False
 
     def get(self, url):
         if url.endswith("/aivideo/getmodelconfigv3"):
@@ -65,6 +66,9 @@ class _SSEClient:
 
     def set_referer(self, value):
         self.referer = value
+
+    def prepare_risk_context(self):
+        self.risk_prepared = True
 
     def stream_sse(self, url, body):
         self.body = body
@@ -142,6 +146,7 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(result.log_id, "log-1")
         self.assertEqual(result.query_id, "query-1")
         self.assertEqual(result.cost_points, 68)
+        self.assertTrue(client.risk_prepared)
         self.assertTrue(client.stream_url.endswith("/oreate/sse/stream"))
         self.assertEqual(
             client.body["extra"],

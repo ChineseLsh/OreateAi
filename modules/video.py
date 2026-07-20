@@ -167,6 +167,7 @@ def submit_video_sse(
         return VideoResult(False, error="video account is not logged in", chat_id=chat_id)
 
     client.set_referer(f"https://www.oreateai.com/home/chat/aiVideo/{chat_id}")
+    client.prepare_risk_context()
 
     body = {
         "ua": client.session.headers.get("User-Agent", ""),

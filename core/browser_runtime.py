@@ -65,7 +65,7 @@ class BrowserRuntime:
             self._page.set_default_timeout(BROWSER_TIMEOUT_MS)
             self._page.goto(
                 f"{BASE_URL}/home/index/zh",
-                wait_until="domcontentloaded",
+                wait_until="commit",
                 timeout=BROWSER_TIMEOUT_MS,
             )
         except Exception:
@@ -82,7 +82,7 @@ class BrowserRuntime:
         self.page.wait_for_function(
             """() => Object.values(window.PARIS_INSTANCE_CACHE || {})
                 .some(value => typeof value?.sendBantiReport === 'function')""",
-            timeout=BROWSER_RISK_TIMEOUT_MS,
+            timeout=BROWSER_TIMEOUT_MS,
         )
 
     def request_json(
@@ -200,7 +200,27 @@ class BrowserRuntime:
         return result
 
     def set_url(self, url: str) -> None:
+        self._wait_for_risk_runtime()
         self.page.evaluate("url => history.replaceState(null, '', url)", url)
+
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        if self._context is None:
+            raise BrowserRuntimeError("browser runtime is closed")
+        self._context.clear_cookies()
+        if cookies:
+            self._context.add_cookies(
+                [
+                    {
+                        "name": name,
+                        "value": str(value),
+                        "domain": ".oreateai.com",
+                        "path": "/",
+                        "secure": True,
+                    }
+                    for name, value in cookies.items()
+                    if name and value is not None
+                ]
+            )
 
     def cookies(self) -> list[dict]:
         return self._context.cookies(BASE_URL) if self._context else []

@@ -1,8 +1,8 @@
 # ThreadAI
 
-OreateAI 浏览器协议工具，提供账号注册、每日签到、账号池恢复和视频生成。
+OreateAI 协议优先工具，提供账号注册、每日签到、账号池恢复和视频生成。
 
-注册、密码登录和视频 SSE 会在真实 Chrome 页面环境中执行风险校验；邮箱轮询、SQLite 持久化、调度和视频下载由 Python 完成。账号 Cookie 保存在 `data.db`，后续命令会先恢复并验证登录状态。
+用户信息、积分、签到、模型配置和会话创建通过 `curl_cffi` Chrome 指纹协议请求完成。只有注册、密码登录和视频 SSE 需要动态 `jt` 时，才按需启动真实 Chrome 并在同一页面环境内完成风控提交。账号 Cookie 保存在 `data.db`，协议与浏览器会话会自动同步。
 
 ## 环境要求
 
@@ -17,7 +17,7 @@ python -m pip install -r requirements.txt
 python -m playwright install chrome
 ```
 
-默认使用本机 Chrome channel，并以可见窗口启动。首次运行时会打开 OreateAI 首页，等浏览器风险运行时就绪后再提交请求。
+默认使用本机 Chrome channel，并以可见窗口启动。查询、Cookie 恢复和签到不会打开 Chrome；首次执行动态风控请求时才加载 OreateAI 风控运行时。
 
 ## 基础配置
 
