@@ -180,7 +180,7 @@ def register_and_add_to_pool(provider_name: str | None = None) -> dict | None:
             result = register(client, provider)
             if not result.success:
                 log.error(f"pool register failed: {result.error}")
-                return None
+                raise RuntimeError(result.error or "registration failed")
             cookies = client.export_cookies()
             save_account(
                 result.email, result.password, result.points,

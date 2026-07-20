@@ -38,6 +38,20 @@ class ApiTests(unittest.TestCase):
         register_account.assert_called_once_with("luckmail")
         self.assertEqual(server.tasks_status["register-task"]["status"], "done")
 
+    def test_register_task_returns_underlying_failure_reason(self):
+        with patch.object(
+            server,
+            "register_and_add_to_pool",
+            side_effect=RuntimeError("risk token failed after 2 attempts"),
+        ):
+            server._bg_register("register-task", "luckmail")
+
+        task = server.tasks_status["register-task"]
+        self.assertEqual(task["status"], "error")
+        self.assertEqual(
+            task["result"]["error"], "risk token failed after 2 attempts"
+        )
+
     def test_checkin_task_keeps_per_account_results_and_earned_total(self):
         results = [
             {

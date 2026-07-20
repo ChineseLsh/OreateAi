@@ -13,6 +13,9 @@ from config import (
     BROWSER_TIMEOUT_MS,
 )
 
+_RISK_TOKEN_ERROR_PREFIX = "THREADAI_RISK_TOKEN:"
+_RISK_TOKEN_ATTEMPTS = 2
+
 
 class BrowserRuntimeError(RuntimeError):
     pass
@@ -79,11 +82,36 @@ class BrowserRuntime:
         return self._page
 
     def _wait_for_risk_runtime(self) -> None:
-        self.page.wait_for_function(
-            """() => Object.values(window.PARIS_INSTANCE_CACHE || {})
-                .some(value => typeof value?.sendBantiReport === 'function')""",
-            timeout=BROWSER_TIMEOUT_MS,
-        )
+        try:
+            self.page.wait_for_function(
+                """() => Object.values(window.PARIS_INSTANCE_CACHE || {})
+                    .some(value => typeof value?.sendBantiReport === 'function')""",
+                timeout=BROWSER_TIMEOUT_MS,
+            )
+        except Exception as exc:
+            raise BrowserRuntimeError(
+                f"risk runtime was not ready within {BROWSER_TIMEOUT_MS} ms"
+            ) from exc
+
+    def _evaluate_risk(self, script: str, payload: dict):
+        self._wait_for_risk_runtime()
+        args = {
+            **payload,
+            "riskTimeout": BROWSER_RISK_TIMEOUT_MS,
+            "riskErrorPrefix": _RISK_TOKEN_ERROR_PREFIX,
+        }
+        last_error = None
+        for _ in range(_RISK_TOKEN_ATTEMPTS):
+            try:
+                return self.page.evaluate(script, args)
+            except Exception as exc:
+                if _RISK_TOKEN_ERROR_PREFIX not in str(exc):
+                    raise BrowserRuntimeError(f"browser request failed: {exc}") from exc
+                last_error = exc
+        raise BrowserRuntimeError(
+            f"risk token failed after {_RISK_TOKEN_ATTEMPTS} attempts "
+            f"({BROWSER_RISK_TIMEOUT_MS} ms each)"
+        ) from last_error
 
     def request_json(
         self,
@@ -93,22 +121,26 @@ class BrowserRuntime:
         body: dict | None = None,
         risk: bool = False,
     ) -> dict:
-        if risk:
-            self._wait_for_risk_runtime()
-        result = self.page.evaluate(
-            """async ({method, url, body, risk, riskTimeout}) => {
+        script = """async ({method, url, body, risk, riskTimeout, riskErrorPrefix}) => {
                 const getJt = async () => {
                     const instance = Object.values(window.PARIS_INSTANCE_CACHE || {})
                         .find(value => typeof value?.sendBantiReport === 'function');
-                    if (!instance) throw new Error('risk runtime is not ready');
+                    if (!instance) throw new Error(`${riskErrorPrefix}runtime unavailable`);
                     return await new Promise((resolve, reject) => {
-                        const timer = setTimeout(() => reject(new Error('risk token timeout')), riskTimeout);
-                        instance.sendBantiReport({subid: ''}, (_error, response) => {
+                        const fail = reason => reject(new Error(`${riskErrorPrefix}${reason}`));
+                        const timer = setTimeout(() => fail('timeout'), riskTimeout);
+                        try {
+                            instance.sendBantiReport({subid: ''}, (error, response) => {
+                                clearTimeout(timer);
+                                if (error) return fail('callback error');
+                                const jt = response?.htj?.jt || '';
+                                if (jt) resolve(jt);
+                                else fail('empty');
+                            });
+                        } catch (_error) {
                             clearTimeout(timer);
-                            const jt = response?.htj?.jt || '';
-                            if (jt) resolve(jt);
-                            else reject(new Error('risk token is empty'));
-                        });
+                            fail('callback threw');
+                        }
                     });
                 };
                 const payload = body ? {...body} : undefined;
@@ -125,14 +157,19 @@ class BrowserRuntime:
                     body: method === 'GET' || payload === undefined ? undefined : JSON.stringify(payload)
                 });
                 return {status: response.status, ok: response.ok, text: await response.text()};
-            }""",
-            {
-                "method": method.upper(),
-                "url": url,
-                "body": body,
-                "risk": risk,
-                "riskTimeout": BROWSER_RISK_TIMEOUT_MS,
-            },
+            }"""
+        args = {
+            "method": method.upper(),
+            "url": url,
+            "body": body,
+            "risk": risk,
+            "riskTimeout": BROWSER_RISK_TIMEOUT_MS,
+            "riskErrorPrefix": _RISK_TOKEN_ERROR_PREFIX,
+        }
+        result = (
+            self._evaluate_risk(script, args)
+            if risk
+            else self.page.evaluate(script, args)
         )
         try:
             payload = json.loads(result["text"])
@@ -145,20 +182,26 @@ class BrowserRuntime:
         return payload
 
     def stream_sse(self, url: str, body: dict) -> list[dict]:
-        self._wait_for_risk_runtime()
-        result = self.page.evaluate(
-            """async ({url, body, riskTimeout}) => {
+        result = self._evaluate_risk(
+            """async ({url, body, riskTimeout, riskErrorPrefix}) => {
                 const instance = Object.values(window.PARIS_INSTANCE_CACHE || {})
                     .find(value => typeof value?.sendBantiReport === 'function');
-                if (!instance) throw new Error('risk runtime is not ready');
+                if (!instance) throw new Error(`${riskErrorPrefix}runtime unavailable`);
                 const jt = await new Promise((resolve, reject) => {
-                    const timer = setTimeout(() => reject(new Error('risk token timeout')), riskTimeout);
-                    instance.sendBantiReport({subid: ''}, (_error, response) => {
+                    const fail = reason => reject(new Error(`${riskErrorPrefix}${reason}`));
+                    const timer = setTimeout(() => fail('timeout'), riskTimeout);
+                    try {
+                        instance.sendBantiReport({subid: ''}, (error, response) => {
+                            clearTimeout(timer);
+                            if (error) return fail('callback error');
+                            const value = response?.htj?.jt || '';
+                            if (value) resolve(value);
+                            else fail('empty');
+                        });
+                    } catch (_error) {
                         clearTimeout(timer);
-                        const value = response?.htj?.jt || '';
-                        if (value) resolve(value);
-                        else reject(new Error('risk token is empty'));
-                    });
+                        fail('callback threw');
+                    }
                 });
                 const response = await fetch(url, {
                     method: 'POST',
@@ -193,14 +236,13 @@ class BrowserRuntime:
                 if (buffer) consume(buffer);
                 return events;
             }""",
-            {"url": url, "body": body, "riskTimeout": BROWSER_RISK_TIMEOUT_MS},
+            {"url": url, "body": body},
         )
         if not isinstance(result, list):
             raise BrowserRuntimeError("SSE returned an invalid event collection")
         return result
 
     def set_url(self, url: str) -> None:
-        self._wait_for_risk_runtime()
         self.page.evaluate("url => history.replaceState(null, '', url)", url)
 
     def set_cookies(self, cookies: dict[str, str]) -> None:

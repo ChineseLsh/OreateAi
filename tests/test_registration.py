@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from core import pool
 from modules import register
@@ -107,6 +107,29 @@ class RegistrationTests(unittest.TestCase):
         self.assertFalse(restored)
         self.assertEqual(len(client.urls), 1)
         self.assertTrue(client.urls[0].endswith("/oreate/user/getuserinfo"))
+
+    def test_pool_registration_failure_preserves_reason(self):
+        provider = Mock()
+        client = Mock()
+        client.__enter__ = Mock(return_value=client)
+        client.__exit__ = Mock(return_value=False)
+        failed = Mock(success=False, error="risk token failed after 2 attempts")
+
+        with (
+            patch(
+                "modules.email_provider.build_email_provider",
+                return_value=provider,
+            ),
+            patch("modules.register.register", return_value=failed),
+            patch.object(pool, "OreateClient", return_value=client),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "risk token failed after 2 attempts"
+            ):
+                pool.register_and_add_to_pool("luckmail")
+
+        provider.create.assert_called_once_with()
+        provider.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

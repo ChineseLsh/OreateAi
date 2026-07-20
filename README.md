@@ -37,8 +37,8 @@ $env:THREADAI_BROWSER_HEADLESS = "false"
 | `THREADAI_ALLOW_PLUS_EMAIL` | `false` | 是否允许邮箱本地部分包含 `+`；成功 HAR 显示此类地址会被拒绝 |
 | `THREADAI_BROWSER_CHANNEL` | `chrome` | Playwright 浏览器 channel |
 | `THREADAI_BROWSER_HEADLESS` | `false` | 是否无头运行 Chrome |
-| `THREADAI_BROWSER_TIMEOUT_MS` | `30000` | 页面和浏览器操作超时 |
-| `THREADAI_BROWSER_RISK_TIMEOUT_MS` | `5000` | 单次浏览器风险令牌超时 |
+| `THREADAI_BROWSER_TIMEOUT_MS` | `60000` | 页面和风险运行时就绪超时 |
+| `THREADAI_BROWSER_RISK_TIMEOUT_MS` | `15000` | 单次浏览器风险令牌超时；失败时仅重试令牌一次 |
 
 CLI 的 `--proxy` 省略时会保留 `THREADAI_PROXY` 配置；显式传入时仅覆盖本次命令。
 
