@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from core.browser_runtime import (
     BrowserRuntime,
     BrowserRuntimeError,
+    _OREATE_RISK_SID,
     _RISK_TOKEN_ERROR_PREFIX,
 )
 
@@ -54,6 +55,12 @@ class BrowserRuntimeTests(unittest.TestCase):
             script.index("payload.jt = await getJt()"),
             script.index("const response = await fetch"),
         )
+        self.assertIn("[riskSid]", script)
+        self.assertNotIn(".find(", script)
+        self.assertEqual(
+            runtime.page.evaluate.call_args_list[0].args[1]["riskSid"],
+            _OREATE_RISK_SID,
+        )
 
     def test_risk_request_does_not_retry_request_failure(self):
         runtime = self._runtime()
@@ -71,11 +78,15 @@ class BrowserRuntimeTests(unittest.TestCase):
 
     def test_risk_request_reports_exhausted_token_attempts(self):
         runtime = self._runtime()
-        runtime.page.evaluate.side_effect = RuntimeError(
-            f"{_RISK_TOKEN_ERROR_PREFIX}empty"
-        )
+        runtime.page.evaluate.side_effect = [
+            RuntimeError(f"{_RISK_TOKEN_ERROR_PREFIX}timeout"),
+            RuntimeError(f"{_RISK_TOKEN_ERROR_PREFIX}callback threw"),
+        ]
 
-        with self.assertRaisesRegex(BrowserRuntimeError, "risk token failed after 2 attempts"):
+        with self.assertRaisesRegex(
+            BrowserRuntimeError,
+            "attempt 1=timeout, attempt 2=callback threw",
+        ):
             runtime.request_json(
                 "POST",
                 "https://www.oreateai.com/passport/api/emailsignupin",
@@ -94,6 +105,32 @@ class BrowserRuntimeTests(unittest.TestCase):
             BrowserRuntimeError, "risk runtime was not ready"
         ):
             runtime._wait_for_risk_runtime()
+
+    def test_risk_runtime_non_timeout_error_is_preserved(self):
+        runtime = BrowserRuntime.__new__(BrowserRuntime)
+        runtime._page = Mock()
+        runtime.page.wait_for_function.side_effect = TypeError("arg must be keyword-only")
+
+        with self.assertRaisesRegex(
+            BrowserRuntimeError, "risk runtime wait failed: arg must be keyword-only"
+        ):
+            runtime._wait_for_risk_runtime()
+
+    def test_risk_runtime_wait_targets_oreate_banti_instance(self):
+        runtime = BrowserRuntime.__new__(BrowserRuntime)
+        runtime._page = Mock()
+
+        runtime._wait_for_risk_runtime()
+
+        script, = runtime.page.wait_for_function.call_args.args
+        self.assertEqual(
+            runtime.page.wait_for_function.call_args.kwargs["arg"],
+            _OREATE_RISK_SID,
+        )
+        self.assertIn("[sid]", script)
+        self.assertIn("_bantiInited", script)
+        self.assertIn("instance.sak", script)
+        self.assertIn("sendBantiReport", script)
 
 
 if __name__ == "__main__":

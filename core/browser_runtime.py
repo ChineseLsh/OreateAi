@@ -15,6 +15,7 @@ from config import (
 
 _RISK_TOKEN_ERROR_PREFIX = "THREADAI_RISK_TOKEN:"
 _RISK_TOKEN_ATTEMPTS = 2
+_OREATE_RISK_SID = "2146"
 
 
 class BrowserRuntimeError(RuntimeError):
@@ -84,14 +85,22 @@ class BrowserRuntime:
     def _wait_for_risk_runtime(self) -> None:
         try:
             self.page.wait_for_function(
-                """() => Object.values(window.PARIS_INSTANCE_CACHE || {})
-                    .some(value => typeof value?.sendBantiReport === 'function')""",
+                """sid => {
+                    const instance = window.PARIS_INSTANCE_CACHE?.[sid];
+                    return String(instance?.sid) === sid
+                        && Boolean(instance.sak)
+                        && instance._bantiInited === true
+                        && typeof instance.sendBantiReport === 'function';
+                }""",
+                arg=_OREATE_RISK_SID,
                 timeout=BROWSER_TIMEOUT_MS,
             )
         except Exception as exc:
-            raise BrowserRuntimeError(
-                f"risk runtime was not ready within {BROWSER_TIMEOUT_MS} ms"
-            ) from exc
+            if type(exc).__name__ == "TimeoutError":
+                raise BrowserRuntimeError(
+                    f"risk runtime was not ready within {BROWSER_TIMEOUT_MS} ms"
+                ) from exc
+            raise BrowserRuntimeError(f"risk runtime wait failed: {exc}") from exc
 
     def _evaluate_risk(self, script: str, payload: dict):
         self._wait_for_risk_runtime()
@@ -99,19 +108,26 @@ class BrowserRuntime:
             **payload,
             "riskTimeout": BROWSER_RISK_TIMEOUT_MS,
             "riskErrorPrefix": _RISK_TOKEN_ERROR_PREFIX,
+            "riskSid": _OREATE_RISK_SID,
         }
-        last_error = None
+        attempt_errors = []
         for _ in range(_RISK_TOKEN_ATTEMPTS):
             try:
                 return self.page.evaluate(script, args)
             except Exception as exc:
-                if _RISK_TOKEN_ERROR_PREFIX not in str(exc):
+                message = str(exc)
+                if _RISK_TOKEN_ERROR_PREFIX not in message:
                     raise BrowserRuntimeError(f"browser request failed: {exc}") from exc
-                last_error = exc
+                reason = message.split(_RISK_TOKEN_ERROR_PREFIX, 1)[1]
+                attempt_errors.append(reason.splitlines()[0].strip() or "unknown")
+        details = ", ".join(
+            f"attempt {index}={reason}"
+            for index, reason in enumerate(attempt_errors, start=1)
+        )
         raise BrowserRuntimeError(
             f"risk token failed after {_RISK_TOKEN_ATTEMPTS} attempts "
-            f"({BROWSER_RISK_TIMEOUT_MS} ms each)"
-        ) from last_error
+            f"({BROWSER_RISK_TIMEOUT_MS} ms each): {details}"
+        )
 
     def request_json(
         self,
@@ -121,20 +137,25 @@ class BrowserRuntime:
         body: dict | None = None,
         risk: bool = False,
     ) -> dict:
-        script = """async ({method, url, body, risk, riskTimeout, riskErrorPrefix}) => {
+        script = """async ({method, url, body, risk, riskTimeout, riskErrorPrefix, riskSid}) => {
                 const getJt = async () => {
-                    const instance = Object.values(window.PARIS_INSTANCE_CACHE || {})
-                        .find(value => typeof value?.sendBantiReport === 'function');
-                    if (!instance) throw new Error(`${riskErrorPrefix}runtime unavailable`);
+                    const instance = window.PARIS_INSTANCE_CACHE?.[riskSid];
+                    if (!instance
+                        || String(instance.sid) !== riskSid
+                        || !instance.sak
+                        || instance._bantiInited !== true
+                        || typeof instance.sendBantiReport !== 'function') {
+                        throw new Error(`${riskErrorPrefix}oreate instance unavailable`);
+                    }
                     return await new Promise((resolve, reject) => {
                         const fail = reason => reject(new Error(`${riskErrorPrefix}${reason}`));
                         const timer = setTimeout(() => fail('timeout'), riskTimeout);
                         try {
                             instance.sendBantiReport({subid: ''}, (error, response) => {
                                 clearTimeout(timer);
-                                if (error) return fail('callback error');
                                 const jt = response?.htj?.jt || '';
                                 if (jt) resolve(jt);
+                                else if (error) fail('callback error');
                                 else fail('empty');
                             });
                         } catch (_error) {
@@ -183,19 +204,24 @@ class BrowserRuntime:
 
     def stream_sse(self, url: str, body: dict) -> list[dict]:
         result = self._evaluate_risk(
-            """async ({url, body, riskTimeout, riskErrorPrefix}) => {
-                const instance = Object.values(window.PARIS_INSTANCE_CACHE || {})
-                    .find(value => typeof value?.sendBantiReport === 'function');
-                if (!instance) throw new Error(`${riskErrorPrefix}runtime unavailable`);
+            """async ({url, body, riskTimeout, riskErrorPrefix, riskSid}) => {
+                const instance = window.PARIS_INSTANCE_CACHE?.[riskSid];
+                if (!instance
+                    || String(instance.sid) !== riskSid
+                    || !instance.sak
+                    || instance._bantiInited !== true
+                    || typeof instance.sendBantiReport !== 'function') {
+                    throw new Error(`${riskErrorPrefix}oreate instance unavailable`);
+                }
                 const jt = await new Promise((resolve, reject) => {
                     const fail = reason => reject(new Error(`${riskErrorPrefix}${reason}`));
                     const timer = setTimeout(() => fail('timeout'), riskTimeout);
                     try {
                         instance.sendBantiReport({subid: ''}, (error, response) => {
                             clearTimeout(timer);
-                            if (error) return fail('callback error');
                             const value = response?.htj?.jt || '';
                             if (value) resolve(value);
+                            else if (error) fail('callback error');
                             else fail('empty');
                         });
                     } catch (_error) {
