@@ -33,6 +33,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(result["values"]["LUCKMAIL_PROJECT_CODE"], "grok")
         self.assertEqual(result["values"]["LUCKMAIL_EMAIL_TYPE"], "ms_imap")
         self.assertEqual(result["values"]["LUCKMAIL_DOMAIN"], "outlook.com")
+        self.assertEqual(result["values"]["LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS"], 10)
 
     def test_update_preserves_blank_secret_and_supports_explicit_clear(self):
         self.env_path.write_text("LUCKMAIL_API_KEY=private-key\n", encoding="utf-8")

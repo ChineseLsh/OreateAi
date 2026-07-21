@@ -33,6 +33,7 @@ from config import (
     LUCKMAIL_IMAP_PROXY,
     LUCKMAIL_INVENTORY_CACHE_SECONDS,
     LUCKMAIL_MODE,
+    LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS,
     LUCKMAIL_ORDER_POLL_INTERVAL,
     LUCKMAIL_ORDER_TIMEOUT,
     LUCKMAIL_POLL_INTERVAL,
@@ -365,35 +366,69 @@ class LuckMailProvider:
             retries=LUCKMAIL_HTTP_RETRIES,
         )
 
+    @staticmethod
+    def _cancel_orders(client: LuckMailClient, order_nos: list[str]) -> None:
+        for order_no in order_nos:
+            try:
+                client.cancel_order(order_no)
+            except Exception as exc:
+                log.warning("LuckMail order cancellation failed: %s", type(exc).__name__)
+        order_nos.clear()
+
     def create(self, **_) -> str:
         if self._mode == "project_order":
             client = self._new_client()
+            held_orders: list[str] = []
             try:
-                order = client.create_order(
-                    project_code=LUCKMAIL_PROJECT_CODE,
-                    email_type=LUCKMAIL_EMAIL_TYPE,
-                    domain=LUCKMAIL_DOMAIN,
+                attempts = max(1, LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS)
+                for _attempt in range(attempts):
+                    try:
+                        order = client.create_order(
+                            project_code=LUCKMAIL_PROJECT_CODE,
+                            email_type=LUCKMAIL_EMAIL_TYPE,
+                            domain=LUCKMAIL_DOMAIN,
+                        )
+                    except LuckMailAPIError as exc:
+                        if exc.code == 2003 and held_orders:
+                            raise RuntimeError(
+                                "LuckMail Grok project has no mailbox beyond existing accounts"
+                            ) from exc
+                        raise
+                    order_no = str(order.get("order_no") or "").strip()
+                    address = str(order.get("email_address") or "").strip()
+                    if not order_no or not address or "@" not in address:
+                        if order_no:
+                            self._cancel_orders(client, [order_no])
+                        raise RuntimeError(
+                            "LuckMail project order returned incomplete mailbox data"
+                        )
+                    local, domain = address.lower().rsplit("@", 1)
+                    if "+" in local or (
+                        LUCKMAIL_DOMAIN and domain != LUCKMAIL_DOMAIN.lower()
+                    ):
+                        self._cancel_orders(client, [order_no])
+                        raise RuntimeError(
+                            f"LuckMail project order did not return a base {LUCKMAIL_DOMAIN} mailbox"
+                        )
+                    with _inventory_lock:
+                        in_use = address.lower() in _reserved or bool(get_account(address))
+                        if not in_use:
+                            _reserved.add(address.lower())
+                    if in_use:
+                        held_orders.append(order_no)
+                        continue
+                    self._cancel_orders(client, held_orders)
+                    self._client = client
+                    self._order_no = order_no
+                    self.address = address
+                    return address
+                raise RuntimeError(
+                    f"LuckMail allocated only existing account mailboxes after {attempts} attempts"
                 )
-                order_no = str(order.get("order_no") or "").strip()
-                address = str(order.get("email_address") or "").strip()
-                if not order_no or not address or "@" not in address:
-                    raise RuntimeError("LuckMail project order returned incomplete mailbox data")
-                local, domain = address.lower().rsplit("@", 1)
-                if "+" in local or (LUCKMAIL_DOMAIN and domain != LUCKMAIL_DOMAIN.lower()):
-                    client.cancel_order(order_no)
-                    raise RuntimeError(
-                        f"LuckMail project order did not return a base {LUCKMAIL_DOMAIN} mailbox"
-                    )
-                if get_account(address):
-                    client.cancel_order(order_no)
-                    raise RuntimeError("LuckMail project order returned an existing account mailbox")
             except Exception:
+                self._cancel_orders(client, held_orders)
                 client.close()
                 raise
-            self._client = client
-            self._order_no = order_no
-            self.address = address
-            return address
         if self._mode != "private_inventory":
             raise ValueError(f"unsupported LuckMail mode: {self._mode}")
         with _inventory_lock:

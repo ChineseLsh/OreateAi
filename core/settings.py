@@ -104,6 +104,7 @@ _SETTINGS: dict[str, Callable[[Any], Any]] = {
     "LUCKMAIL_PROJECT_CODE": _nonempty_string("grok"),
     "LUCKMAIL_EMAIL_TYPE": _choice(LUCKMAIL_EMAIL_TYPE_CHOICES, "ms_imap"),
     "LUCKMAIL_DOMAIN": _nonempty_string("outlook.com"),
+    "LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS": _integer(10, 1, 50),
     "LUCKMAIL_ORDER_TIMEOUT": _integer(300, 10, 1_800),
     "LUCKMAIL_ORDER_POLL_INTERVAL": _integer(3, 1, 60),
     "LUCKMAIL_INVENTORY_CACHE_SECONDS": _integer(60, 0, 86_400),

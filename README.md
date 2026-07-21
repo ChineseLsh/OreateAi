@@ -65,6 +65,7 @@ LUCKMAIL_API_SECRET=<your-api-secret>
 | `LUCKMAIL_PROJECT_CODE` | `grok` | LuckMail 项目代码 |
 | `LUCKMAIL_EMAIL_TYPE` | `ms_imap` | 项目订单邮箱类型 |
 | `LUCKMAIL_DOMAIN` | `outlook.com` | 项目订单要求的邮箱域名；返回地址不匹配时取消订单 |
+| `LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS` | `10` | 遇到已注册邮箱时保持订单占位并继续分配的最大次数 |
 | `LUCKMAIL_ORDER_TIMEOUT` | `300` | 项目订单接码超时秒数 |
 | `LUCKMAIL_ORDER_POLL_INTERVAL` | `3` | 项目订单轮询间隔秒数 |
 | `LUCKMAIL_INVENTORY_CACHE_SECONDS` | `60` | 邮箱库存缓存时间 |

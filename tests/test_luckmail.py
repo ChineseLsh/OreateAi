@@ -257,6 +257,50 @@ class LuckMailTests(unittest.TestCase):
 
         self.assertEqual(fake.cancelled, ["ORD-3"])
 
+    def test_project_provider_holds_existing_accounts_until_fresh_mailbox(self):
+        class FakeClient:
+            def __init__(self):
+                self.orders = iter(
+                    (
+                        {"order_no": "ORD-old-1", "email_address": "old1@outlook.com"},
+                        {"order_no": "ORD-old-2", "email_address": "old2@outlook.com"},
+                        {"order_no": "ORD-new", "email_address": "fresh@outlook.com"},
+                    )
+                )
+                self.cancelled = []
+
+            def create_order(self, **kwargs):
+                return next(self.orders)
+
+            def cancel_order(self, order_no):
+                self.cancelled.append(order_no)
+
+            def close(self):
+                pass
+
+        fake = FakeClient()
+        with (
+            patch.object(luckmail, "LUCKMAIL_MODE", "project_order"),
+            patch.object(luckmail, "LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS", 5),
+            patch.object(luckmail, "LuckMailClient", return_value=fake),
+            patch.object(
+                luckmail,
+                "get_account",
+                side_effect=lambda address: {"email": address}
+                if address.startswith("old")
+                else None,
+            ),
+        ):
+            provider = luckmail.LuckMailProvider()
+            self.assertEqual(provider.create(), "fresh@outlook.com")
+            self.assertEqual(fake.cancelled, ["ORD-old-1", "ORD-old-2"])
+            provider.close()
+
+        self.assertEqual(
+            fake.cancelled,
+            ["ORD-old-1", "ORD-old-2", "ORD-new"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
