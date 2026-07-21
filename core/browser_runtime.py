@@ -254,7 +254,7 @@ class BrowserRuntime:
                 while (true) {
                     const {done, value} = await reader.read();
                     buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
-                    const lines = buffer.split(/\r?\n/);
+                    const lines = buffer.split(/\\r?\\n/);
                     buffer = lines.pop() || '';
                     lines.forEach(consume);
                     if (done) break;

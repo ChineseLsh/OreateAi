@@ -132,6 +132,18 @@ class BrowserRuntimeTests(unittest.TestCase):
         self.assertIn("instance.sak", script)
         self.assertIn("sendBantiReport", script)
 
+    def test_sse_script_preserves_crlf_regex_escapes(self):
+        runtime = self._runtime()
+        runtime.page.evaluate.return_value = []
+
+        runtime.stream_sse(
+            "https://www.oreateai.com/oreate/sse/stream",
+            {"prompt": "test"},
+        )
+
+        script = runtime.page.evaluate.call_args.args[0]
+        self.assertIn(r"buffer.split(/\r?\n/)", script)
+
 
 if __name__ == "__main__":
     unittest.main()
