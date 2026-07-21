@@ -1,4 +1,4 @@
-"""Configurable LuckMail project-order and private Outlook provider."""
+"""Configurable LuckMail project, purchase, and private Outlook provider."""
 
 from __future__ import annotations
 
@@ -216,6 +216,42 @@ class LuckMailClient:
             f"/api/v1/openapi/order/{safe_order_no}/cancel",
         ) or {}
 
+    def purchase_email(
+        self,
+        *,
+        project_code: str,
+        email_type: str,
+        domain: str = "",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "project_code": project_code,
+            "email_type": email_type,
+            "quantity": 1,
+        }
+        if domain:
+            body["domain"] = domain
+        return self._request(
+            "POST",
+            "/api/v1/openapi/email/purchase",
+            json_body=body,
+            retryable=False,
+        ) or {}
+
+    def list_token_mails(self, token: str) -> dict[str, Any]:
+        safe_token = quote(str(token), safe="")
+        return self._request(
+            "GET",
+            f"/api/v1/openapi/email/token/{safe_token}/mails",
+        ) or {}
+
+    def get_token_mail_detail(self, token: str, message_id: str) -> dict[str, Any]:
+        safe_token = quote(str(token), safe="")
+        safe_message_id = quote(str(message_id), safe="")
+        return self._request(
+            "GET",
+            f"/api/v1/openapi/email/token/{safe_token}/mails/{safe_message_id}",
+        ) or {}
+
     def close(self) -> None:
         self.http.close()
 
@@ -355,6 +391,8 @@ class LuckMailProvider:
         self._client: LuckMailClient | None = None
         self._order_no = ""
         self._order_finished = False
+        self._purchase_token = ""
+        self._inspected_message_ids: set[str] = set()
 
     @staticmethod
     def _new_client() -> LuckMailClient:
@@ -375,7 +413,66 @@ class LuckMailProvider:
                 log.warning("LuckMail order cancellation failed: %s", type(exc).__name__)
         order_nos.clear()
 
+    def _use_purchase(self, record: dict[str, Any]) -> str | None:
+        address = str(record.get("email_address") or "").strip()
+        token = str(record.get("token") or "").strip()
+        project = str(
+            record.get("project_code")
+            or record.get("project_name")
+            or record.get("project")
+            or ""
+        ).strip().lower()
+        if project and project != LUCKMAIL_PROJECT_CODE.lower():
+            return None
+        if not address or "@" not in address or not token:
+            return None
+        local, domain = address.lower().rsplit("@", 1)
+        if "+" in local or (LUCKMAIL_DOMAIN and domain != LUCKMAIL_DOMAIN.lower()):
+            return None
+        if record.get("user_disabled") in (1, True, "1"):
+            return None
+        with _inventory_lock:
+            if address.lower() in _reserved or get_account(address):
+                return None
+            _reserved.add(address.lower())
+        self.address = address
+        self._purchase_token = token
+        return address
+
+    def _create_purchase(self) -> str:
+        client = self._new_client()
+        try:
+            attempts = max(1, LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS)
+            for _attempt in range(attempts):
+                payload = client.purchase_email(
+                    project_code=LUCKMAIL_PROJECT_CODE,
+                    email_type=LUCKMAIL_EMAIL_TYPE,
+                    domain=LUCKMAIL_DOMAIN,
+                )
+                rows = (
+                    payload.get("purchases")
+                    or payload.get("list")
+                    or payload.get("items")
+                    or []
+                )
+                for row in rows:
+                    if isinstance(row, dict) and (address := self._use_purchase(row)):
+                        self._client = client
+                        return address
+            raise RuntimeError(
+                f"LuckMail project purchases returned only existing accounts "
+                f"after {attempts} attempts"
+            )
+        except Exception:
+            if self.address:
+                with _inventory_lock:
+                    _reserved.discard(self.address.lower())
+            client.close()
+            raise
+
     def create(self, **_) -> str:
+        if self._mode == "project_purchase":
+            return self._create_purchase()
         if self._mode == "project_order":
             client = self._new_client()
             held_orders: list[str] = []
@@ -441,6 +538,40 @@ class LuckMailProvider:
                 self._account = dict(account)
                 return address
         raise RuntimeError("LuckMail has no unused base mailbox")
+
+    @staticmethod
+    def _extract_oreate_token(*values: Any) -> str | None:
+        content = html.unescape("\n".join(str(value or "") for value in values))
+        content = unquote(unquote(content))
+        if "oreate" not in content.lower():
+            return None
+        match = TOKEN_ID_RE.search(content)
+        return match.group(1) if match else None
+
+    def _find_purchase_token(self) -> str | None:
+        assert self._client is not None
+        payload = self._client.list_token_mails(self._purchase_token)
+        if payload.get("alive") is False:
+            raise RuntimeError("LuckMail purchased mailbox is unavailable")
+        rows = payload.get("mails") or payload.get("list") or payload.get("items") or []
+        for row in reversed(rows[-max(1, LUCKMAIL_IMAP_LAST_N) :]):
+            if not isinstance(row, dict):
+                continue
+            token_id = self._extract_oreate_token(*row.values())
+            if token_id:
+                return token_id
+            message_id = str(row.get("message_id") or row.get("id") or "").strip()
+            if not message_id or message_id in self._inspected_message_ids:
+                continue
+            detail = self._client.get_token_mail_detail(
+                self._purchase_token,
+                message_id,
+            )
+            self._inspected_message_ids.add(message_id)
+            token_id = self._extract_oreate_token(*row.values(), *detail.values())
+            if token_id:
+                return token_id
+        return None
 
     def _refresh_access_token(self) -> str:
         assert self._account is not None
@@ -532,6 +663,24 @@ class LuckMailProvider:
     def wait_for_verification_link(
         self, timeout: int | None = None, poll_interval: int | None = None
     ) -> tuple[str, str]:
+        if self._mode == "project_purchase":
+            if not self._client or not self._purchase_token or not self.address:
+                raise RuntimeError("LuckMail project purchase has not been created")
+            wait_seconds = LUCKMAIL_ORDER_TIMEOUT if timeout is None else timeout
+            interval = max(
+                1,
+                LUCKMAIL_ORDER_POLL_INTERVAL if poll_interval is None else poll_interval,
+            )
+            deadline = time.time() + max(0, wait_seconds)
+            while time.time() < deadline:
+                token_id = self._find_purchase_token()
+                if token_id:
+                    return self.address, token_id
+                time.sleep(interval)
+            raise TimeoutError(
+                f"LuckMail project {LUCKMAIL_PROJECT_CODE} received no OreateAI tokenID "
+                f"within {wait_seconds}s"
+            )
         if self._mode == "project_order":
             if not self._client or not self._order_no or not self.address:
                 raise RuntimeError("LuckMail project order has not been created")

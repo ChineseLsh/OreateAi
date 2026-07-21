@@ -286,7 +286,8 @@ tr:hover td{background:rgba(99,102,241,.03)}
             <div class="config-section-title">邮箱来源</div>
             <div class="field"><label>模式</label>
               <select id="cfg-LUCKMAIL_MODE" onchange="toggleLuckMailMode()">
-                <option value="project_order">项目接码</option>
+                <option value="project_purchase">项目邮箱（原始邮件）</option>
+                <option value="project_order">项目接码（匹配规则）</option>
                 <option value="private_inventory">私有邮箱库存</option>
               </select>
             </div>
@@ -406,7 +407,7 @@ function setConfigForm(data){
   toggleLuckMailMode();
 }
 function toggleLuckMailMode(){
-  const project=document.getElementById('cfg-LUCKMAIL_MODE').value==='project_order';
+  const project=document.getElementById('cfg-LUCKMAIL_MODE').value!=='private_inventory';
   document.getElementById('luckmail-project-settings').style.display=project?'block':'none';
   document.getElementById('luckmail-private-settings').style.display=project?'none':'block';
 }

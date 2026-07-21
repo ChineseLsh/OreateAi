@@ -52,6 +52,7 @@ def _mail_bytes(to_address, body):
 class LuckMailTests(unittest.TestCase):
     def setUp(self):
         luckmail._rotated_refresh_tokens.clear()
+        luckmail._reserved.clear()
 
     def test_normalize_record_keeps_only_usable_base_ms_imap_mailboxes(self):
         valid = {
@@ -180,6 +181,49 @@ class LuckMailTests(unittest.TestCase):
 
         self.assertEqual(attempts, 1)
 
+    def test_project_purchase_client_uses_token_mail_endpoints(self):
+        requests = []
+
+        def handler(request):
+            requests.append(request)
+            if request.url.path.endswith("/email/purchase"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "code": 0,
+                        "data": {
+                            "purchases": [{
+                                "email_address": "user@outlook.com",
+                                "token": "mail/token",
+                            }],
+                        },
+                    },
+                )
+            if request.url.raw_path.endswith(b"/mails/message%2F1"):
+                return httpx.Response(200, json={"code": 0, "data": {"html_body": "body"}})
+            return httpx.Response(200, json={"code": 0, "data": {"mails": []}})
+
+        client = luckmail.LuckMailClient(
+            "api-key",
+            transport=httpx.MockTransport(handler),
+        )
+        purchased = client.purchase_email(
+            project_code="grok",
+            email_type="ms_imap",
+            domain="outlook.com",
+        )
+        client.list_token_mails("mail/token")
+        client.get_token_mail_detail("mail/token", "message/1")
+        client.close()
+
+        self.assertEqual(purchased["purchases"][0]["token"], "mail/token")
+        self.assertEqual(
+            requests[0].read(),
+            b'{"project_code":"grok","email_type":"ms_imap","quantity":1,"domain":"outlook.com"}',
+        )
+        self.assertIn(b"/email/token/mail%2Ftoken/mails", requests[1].url.raw_path)
+        self.assertTrue(requests[2].url.raw_path.endswith(b"/mails/message%2F1"))
+
     def test_project_provider_polls_and_cancels_pending_order(self):
         token_id = "12345678-1234-4abc-8def-1234567890ab"
 
@@ -257,6 +301,97 @@ class LuckMailTests(unittest.TestCase):
                 provider.create()
 
         self.assertEqual(fake.cancelled, ["ORD-3"])
+
+    def test_project_purchase_provider_buys_mailbox_and_reads_raw_oreate_mail(self):
+        token_id = "12345678-1234-4abc-8def-1234567890ab"
+
+        class FakeClient:
+            def __init__(self):
+                self.closed = False
+                self.purchase_calls = []
+
+            def purchase_email(self, **kwargs):
+                self.purchase_calls.append(kwargs)
+                return {"purchases": [{
+                    "email_address": "fresh@outlook.com",
+                    "project_name": "Grok",
+                    "token": "mail-token",
+                }]}
+
+            def list_token_mails(self, token):
+                return {"mails": [{
+                    "message_id": "message-id",
+                    "from": "Oreate AI <verify@example.invalid>",
+                    "subject": "Verify your Oreate account",
+                }]}
+
+            def get_token_mail_detail(self, token, message_id):
+                return {
+                    "html_body": (
+                        "<a href=\"https://example.invalid/?tokenID="
+                        f"{token_id}&amp;from=mail\">Verify</a>"
+                    ),
+                }
+
+            def close(self):
+                self.closed = True
+
+        fake = FakeClient()
+        with (
+            patch.object(luckmail, "LUCKMAIL_MODE", "project_purchase"),
+            patch.object(luckmail, "LuckMailClient", return_value=fake),
+            patch.object(luckmail, "get_account", return_value=None),
+        ):
+            provider = luckmail.LuckMailProvider()
+            self.assertEqual(provider.create(), "fresh@outlook.com")
+            self.assertEqual(
+                provider.wait_for_verification_link(timeout=1),
+                ("fresh@outlook.com", token_id),
+            )
+            provider.close()
+
+        self.assertEqual(fake.purchase_calls, [{
+            "project_code": "grok",
+            "email_type": "ms_imap",
+            "domain": "outlook.com",
+        }])
+        self.assertTrue(fake.closed)
+
+    def test_project_purchase_provider_skips_existing_purchases_until_fresh(self):
+        class FakeClient:
+            def __init__(self):
+                self.purchases = iter((
+                    {"email_address": "old1@outlook.com", "project_name": "Grok", "token": "token-1"},
+                    {"email_address": "old2@outlook.com", "project_name": "Grok", "token": "token-2"},
+                    {"email_address": "fresh@outlook.com", "project_name": "Grok", "token": "token-new"},
+                ))
+                self.purchase_calls = 0
+
+            def purchase_email(self, **kwargs):
+                self.purchase_calls += 1
+                return {"purchases": [next(self.purchases)]}
+
+            def close(self):
+                pass
+
+        fake = FakeClient()
+        with (
+            patch.object(luckmail, "LUCKMAIL_MODE", "project_purchase"),
+            patch.object(luckmail, "LUCKMAIL_ORDER_ALLOCATION_ATTEMPTS", 3),
+            patch.object(luckmail, "LuckMailClient", return_value=fake),
+            patch.object(
+                luckmail,
+                "get_account",
+                side_effect=lambda address: {"email": address}
+                if address.startswith("old")
+                else None,
+            ),
+        ):
+            provider = luckmail.LuckMailProvider()
+            self.assertEqual(provider.create(), "fresh@outlook.com")
+            provider.close()
+
+        self.assertEqual(fake.purchase_calls, 3)
 
     def test_project_provider_holds_existing_accounts_until_fresh_mailbox(self):
         class FakeClient:

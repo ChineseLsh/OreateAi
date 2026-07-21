@@ -29,7 +29,7 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(result["secret_status"]["LUCKMAIL_API_KEY"])
         self.assertFalse(result["values"]["THREADAI_BROWSER_HEADLESS"])
         self.assertEqual(result["values"]["THREADAI_BROWSER_TIMEOUT_MS"], 45000)
-        self.assertEqual(result["values"]["LUCKMAIL_MODE"], "project_order")
+        self.assertEqual(result["values"]["LUCKMAIL_MODE"], "project_purchase")
         self.assertEqual(result["values"]["LUCKMAIL_PROJECT_CODE"], "grok")
         self.assertEqual(result["values"]["LUCKMAIL_EMAIL_TYPE"], "ms_imap")
         self.assertEqual(result["values"]["LUCKMAIL_DOMAIN"], "outlook.com")

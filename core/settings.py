@@ -18,7 +18,7 @@ PROVIDER_CHOICES = {
     "guerrilla",
     "1secmail",
 }
-LUCKMAIL_MODE_CHOICES = {"project_order", "private_inventory"}
+LUCKMAIL_MODE_CHOICES = {"project_order", "project_purchase", "private_inventory"}
 LUCKMAIL_EMAIL_TYPE_CHOICES = {"ms_graph", "ms_imap", "google_variant", "self_built"}
 
 _SECRET_KEYS = {"LUCKMAIL_API_KEY", "LUCKMAIL_API_SECRET"}
@@ -100,7 +100,7 @@ _SETTINGS: dict[str, Callable[[Any], Any]] = {
     "LUCKMAIL_BASE_URL": _string("https://mails.luckyous.com"),
     "LUCKMAIL_PROXY": _string(""),
     "LUCKMAIL_HTTP_RETRIES": _integer(3, 1, 20),
-    "LUCKMAIL_MODE": _choice(LUCKMAIL_MODE_CHOICES, "project_order"),
+    "LUCKMAIL_MODE": _choice(LUCKMAIL_MODE_CHOICES, "project_purchase"),
     "LUCKMAIL_PROJECT_CODE": _nonempty_string("grok"),
     "LUCKMAIL_EMAIL_TYPE": _choice(LUCKMAIL_EMAIL_TYPE_CHOICES, "ms_imap"),
     "LUCKMAIL_DOMAIN": _nonempty_string("outlook.com"),
