@@ -118,6 +118,8 @@ tr:hover td{background:rgba(99,102,241,.03)}
 .warn-text{color:var(--red);font-size:12px;margin-top:4px}
 .secret-state{font-size:11px;color:var(--text2);margin-left:8px}
 .config-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.config-section{border-top:1px solid var(--border);padding-top:14px;margin-top:16px}
+.config-section-title{font-size:12px;font-weight:600;color:var(--text3);margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -277,19 +279,53 @@ tr:hover td{background:rgba(99,102,241,.03)}
           <div class="field"><label>API 地址</label><input id="cfg-LUCKMAIL_BASE_URL" autocomplete="off"></div>
           <div class="row row-2">
             <div class="field"><label>API 代理</label><input id="cfg-LUCKMAIL_PROXY" autocomplete="off"></div>
-            <div class="field"><label>IMAP 代理</label><input id="cfg-LUCKMAIL_IMAP_PROXY" autocomplete="off"></div>
-          </div>
-          <div class="field"><label>IMAP Hosts</label><input id="cfg-LUCKMAIL_IMAP_HOSTS" autocomplete="off"></div>
-          <div class="row row-3">
             <div class="field"><label>请求次数</label><input type="number" id="cfg-LUCKMAIL_HTTP_RETRIES" min="1" max="20"></div>
-            <div class="field"><label>库存缓存（秒）</label><input type="number" id="cfg-LUCKMAIL_INVENTORY_CACHE_SECONDS" min="0" max="86400"></div>
-            <div class="field"><label>轮询间隔（秒）</label><input type="number" id="cfg-LUCKMAIL_POLL_INTERVAL" min="1" max="300"></div>
           </div>
-          <div class="row row-2">
-            <div class="field"><label>邮件时效（秒）</label><input type="number" id="cfg-LUCKMAIL_RECENT_SECONDS" min="60" max="86400"></div>
-            <div class="field"><label>检查邮件数</label><input type="number" id="cfg-LUCKMAIL_IMAP_LAST_N" min="1" max="500"></div>
+
+          <div class="config-section" id="luckmail-mode-settings">
+            <div class="config-section-title">邮箱来源</div>
+            <div class="field"><label>模式</label>
+              <select id="cfg-LUCKMAIL_MODE" onchange="toggleLuckMailMode()">
+                <option value="project_order">项目接码</option>
+                <option value="private_inventory">私有邮箱库存</option>
+              </select>
+            </div>
           </div>
-          <div class="field"><label class="check-option"><input type="checkbox" id="cfg-LUCKMAIL_REQUIRE_RECIPIENT_MATCH"><span>匹配收件人</span></label></div>
+
+          <div class="config-section" id="luckmail-project-settings">
+            <div class="config-section-title">项目接码</div>
+            <div class="row row-2">
+              <div class="field"><label>项目代码</label><input id="cfg-LUCKMAIL_PROJECT_CODE" autocomplete="off"></div>
+              <div class="field"><label>邮箱类型</label>
+                <select id="cfg-LUCKMAIL_EMAIL_TYPE">
+                  <option value="ms_imap">Microsoft IMAP</option>
+                  <option value="ms_graph">Microsoft Graph</option>
+                  <option value="google_variant">Google Variant</option>
+                  <option value="self_built">自建邮箱</option>
+                </select>
+              </div>
+            </div>
+            <div class="row row-3">
+              <div class="field"><label>邮箱域名</label><input id="cfg-LUCKMAIL_DOMAIN" autocomplete="off"></div>
+              <div class="field"><label>接码超时（秒）</label><input type="number" id="cfg-LUCKMAIL_ORDER_TIMEOUT" min="10" max="1800"></div>
+              <div class="field"><label>订单轮询（秒）</label><input type="number" id="cfg-LUCKMAIL_ORDER_POLL_INTERVAL" min="1" max="60"></div>
+            </div>
+          </div>
+
+          <div class="config-section" id="luckmail-private-settings">
+            <div class="config-section-title">私有库存 IMAP</div>
+            <div class="row row-2">
+              <div class="field"><label>IMAP 代理</label><input id="cfg-LUCKMAIL_IMAP_PROXY" autocomplete="off"></div>
+              <div class="field"><label>库存缓存（秒）</label><input type="number" id="cfg-LUCKMAIL_INVENTORY_CACHE_SECONDS" min="0" max="86400"></div>
+            </div>
+            <div class="field"><label>IMAP Hosts</label><input id="cfg-LUCKMAIL_IMAP_HOSTS" autocomplete="off"></div>
+            <div class="row row-3">
+              <div class="field"><label>轮询间隔（秒）</label><input type="number" id="cfg-LUCKMAIL_POLL_INTERVAL" min="1" max="300"></div>
+              <div class="field"><label>邮件时效（秒）</label><input type="number" id="cfg-LUCKMAIL_RECENT_SECONDS" min="60" max="86400"></div>
+              <div class="field"><label>检查邮件数</label><input type="number" id="cfg-LUCKMAIL_IMAP_LAST_N" min="1" max="500"></div>
+            </div>
+            <div class="field"><label class="check-option"><input type="checkbox" id="cfg-LUCKMAIL_REQUIRE_RECIPIENT_MATCH"><span>匹配收件人</span></label></div>
+          </div>
         </div>
       </div>
       <div class="card">
@@ -319,7 +355,9 @@ const CONFIG_FIELDS = [
   'THREADAI_PROXY','THREADAI_EMAIL_PROVIDER','THREADAI_ALLOW_PLUS_EMAIL',
   'THREADAI_BROWSER_CHANNEL','THREADAI_BROWSER_HEADLESS','THREADAI_BROWSER_TIMEOUT_MS',
   'THREADAI_BROWSER_RISK_TIMEOUT_MS','LUCKMAIL_BASE_URL','LUCKMAIL_PROXY',
-  'LUCKMAIL_HTTP_RETRIES','LUCKMAIL_INVENTORY_CACHE_SECONDS','LUCKMAIL_POLL_INTERVAL',
+  'LUCKMAIL_HTTP_RETRIES','LUCKMAIL_MODE','LUCKMAIL_PROJECT_CODE','LUCKMAIL_EMAIL_TYPE',
+  'LUCKMAIL_DOMAIN','LUCKMAIL_ORDER_TIMEOUT','LUCKMAIL_ORDER_POLL_INTERVAL',
+  'LUCKMAIL_INVENTORY_CACHE_SECONDS','LUCKMAIL_POLL_INTERVAL',
   'LUCKMAIL_RECENT_SECONDS','LUCKMAIL_IMAP_HOSTS','LUCKMAIL_IMAP_LAST_N',
   'LUCKMAIL_REQUIRE_RECIPIENT_MATCH','LUCKMAIL_IMAP_PROXY'
 ];
@@ -358,6 +396,12 @@ function setConfigForm(data){
     const status=document.getElementById('status-'+key);
     status.textContent=data.secret_status[key]?'已配置':'未配置';
   });
+  toggleLuckMailMode();
+}
+function toggleLuckMailMode(){
+  const project=document.getElementById('cfg-LUCKMAIL_MODE').value==='project_order';
+  document.getElementById('luckmail-project-settings').style.display=project?'block':'none';
+  document.getElementById('luckmail-private-settings').style.display=project?'none':'block';
 }
 async function loadConfig(){
   try{setConfigForm(await apiFetch('/api/config'));configLoaded=true}

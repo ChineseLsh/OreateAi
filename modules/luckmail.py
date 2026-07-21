@@ -1,4 +1,4 @@
-"""Configurable LuckMail Outlook inventory and OAuth2 IMAP provider."""
+"""Configurable LuckMail project-order and private Outlook provider."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import time
 from email.header import decode_header, make_header
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 import httpx
 
@@ -26,11 +26,17 @@ from config import (
     LUCKMAIL_API_SECRET,
     LUCKMAIL_BASE_URL,
     LUCKMAIL_HTTP_RETRIES,
+    LUCKMAIL_DOMAIN,
+    LUCKMAIL_EMAIL_TYPE,
     LUCKMAIL_IMAP_HOSTS,
     LUCKMAIL_IMAP_LAST_N,
     LUCKMAIL_IMAP_PROXY,
     LUCKMAIL_INVENTORY_CACHE_SECONDS,
+    LUCKMAIL_MODE,
+    LUCKMAIL_ORDER_POLL_INTERVAL,
+    LUCKMAIL_ORDER_TIMEOUT,
     LUCKMAIL_POLL_INTERVAL,
+    LUCKMAIL_PROJECT_CODE,
     LUCKMAIL_PROXY,
     LUCKMAIL_RECENT_SECONDS,
     LUCKMAIL_REQUIRE_RECIPIENT_MATCH,
@@ -40,6 +46,7 @@ from core.db import get_account
 log = logging.getLogger(__name__)
 
 TOKEN_ID_RE = re.compile(r"tokenID=([a-fA-F0-9-]{36})")
+TOKEN_ID_VALUE_RE = re.compile(r"[a-fA-F0-9-]{36}")
 MICROSOFT_TOKEN_ENDPOINTS = (
     (
         "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
@@ -119,6 +126,7 @@ class LuckMailClient:
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        retryable: bool = True,
     ) -> Any:
         path = "/" + path.lstrip("/")
         query = urlencode(params or {}, doseq=True)
@@ -129,7 +137,8 @@ class LuckMailClient:
             else ""
         )
         last_error: Exception | None = None
-        for attempt in range(1, self.retries + 1):
+        max_attempts = self.retries if retryable else 1
+        for attempt in range(1, max_attempts + 1):
             try:
                 response = self.http.request(
                     method,
@@ -148,7 +157,11 @@ class LuckMailClient:
                         self._redact(payload.get("message") or "request failed"),
                         response.status_code,
                     )
-                    if (code >= 5000 or response.status_code >= 500) and attempt < self.retries:
+                    if (
+                        retryable
+                        and (code >= 5000 or response.status_code >= 500)
+                        and attempt < max_attempts
+                    ):
                         last_error = error
                         time.sleep(min(0.5 * attempt, 2))
                         continue
@@ -158,15 +171,48 @@ class LuckMailClient:
                 raise
             except Exception as exc:
                 last_error = exc
-                if attempt < self.retries:
+                if retryable and attempt < max_attempts:
                     time.sleep(min(0.5 * attempt, 2))
-        raise RuntimeError(f"LuckMail request failed after {self.retries} attempts") from last_error
+                    continue
+                break
+        raise RuntimeError(f"LuckMail request failed after {max_attempts} attempts") from last_error
 
     def list_private_emails(self, page: int = 1, page_size: int = 100) -> dict[str, Any]:
         return self._request(
             "GET",
             "/api/v1/openapi/emails",
             params={"page": page, "page_size": page_size},
+        ) or {}
+
+    def create_order(
+        self,
+        *,
+        project_code: str,
+        email_type: str,
+        domain: str = "",
+    ) -> dict[str, Any]:
+        body = {"project_code": project_code, "email_type": email_type}
+        if domain:
+            body["domain"] = domain
+        return self._request(
+            "POST",
+            "/api/v1/openapi/order/create",
+            json_body=body,
+            retryable=False,
+        ) or {}
+
+    def get_order_code(self, order_no: str) -> dict[str, Any]:
+        safe_order_no = quote(str(order_no), safe="")
+        return self._request(
+            "GET",
+            f"/api/v1/openapi/order/{safe_order_no}/code",
+        ) or {}
+
+    def cancel_order(self, order_no: str) -> dict[str, Any]:
+        safe_order_no = quote(str(order_no), safe="")
+        return self._request(
+            "POST",
+            f"/api/v1/openapi/order/{safe_order_no}/cancel",
         ) or {}
 
     def close(self) -> None:
@@ -304,8 +350,52 @@ class LuckMailProvider:
     def __init__(self):
         self.address = ""
         self._account: dict[str, Any] | None = None
+        self._mode = LUCKMAIL_MODE
+        self._client: LuckMailClient | None = None
+        self._order_no = ""
+        self._order_finished = False
+
+    @staticmethod
+    def _new_client() -> LuckMailClient:
+        return LuckMailClient(
+            LUCKMAIL_API_KEY,
+            api_secret=LUCKMAIL_API_SECRET,
+            base_url=LUCKMAIL_BASE_URL,
+            proxy=_proxy_value(LUCKMAIL_PROXY, DEFAULT_PROXY),
+            retries=LUCKMAIL_HTTP_RETRIES,
+        )
 
     def create(self, **_) -> str:
+        if self._mode == "project_order":
+            client = self._new_client()
+            try:
+                order = client.create_order(
+                    project_code=LUCKMAIL_PROJECT_CODE,
+                    email_type=LUCKMAIL_EMAIL_TYPE,
+                    domain=LUCKMAIL_DOMAIN,
+                )
+                order_no = str(order.get("order_no") or "").strip()
+                address = str(order.get("email_address") or "").strip()
+                if not order_no or not address or "@" not in address:
+                    raise RuntimeError("LuckMail project order returned incomplete mailbox data")
+                local, domain = address.lower().rsplit("@", 1)
+                if "+" in local or (LUCKMAIL_DOMAIN and domain != LUCKMAIL_DOMAIN.lower()):
+                    client.cancel_order(order_no)
+                    raise RuntimeError(
+                        f"LuckMail project order did not return a base {LUCKMAIL_DOMAIN} mailbox"
+                    )
+                if get_account(address):
+                    client.cancel_order(order_no)
+                    raise RuntimeError("LuckMail project order returned an existing account mailbox")
+            except Exception:
+                client.close()
+                raise
+            self._client = client
+            self._order_no = order_no
+            self.address = address
+            return address
+        if self._mode != "private_inventory":
+            raise ValueError(f"unsupported LuckMail mode: {self._mode}")
         with _inventory_lock:
             for account in _load_inventory():
                 address = account["address"]
@@ -405,12 +495,40 @@ class LuckMailProvider:
                 pass
 
     def wait_for_verification_link(
-        self, timeout: int = 180, poll_interval: int = 4
+        self, timeout: int | None = None, poll_interval: int | None = None
     ) -> tuple[str, str]:
+        if self._mode == "project_order":
+            if not self._client or not self._order_no or not self.address:
+                raise RuntimeError("LuckMail project order has not been created")
+            wait_seconds = LUCKMAIL_ORDER_TIMEOUT if timeout is None else timeout
+            interval = max(
+                1,
+                LUCKMAIL_ORDER_POLL_INTERVAL if poll_interval is None else poll_interval,
+            )
+            deadline = time.time() + max(0, wait_seconds)
+            while time.time() < deadline:
+                result = self._client.get_order_code(self._order_no)
+                status = str(result.get("status") or "pending").strip().lower()
+                if status == "success":
+                    token_id = str(result.get("verification_code") or "").strip()
+                    if not TOKEN_ID_VALUE_RE.fullmatch(token_id):
+                        raise RuntimeError(
+                            "LuckMail project order did not return an OreateAI tokenID"
+                        )
+                    self._order_finished = True
+                    return self.address, token_id
+                if status in {"timeout", "cancelled"}:
+                    self._order_finished = True
+                    raise RuntimeError(f"LuckMail project order ended with status {status}")
+                time.sleep(interval)
+            raise TimeoutError(
+                f"LuckMail project order received no OreateAI verification code within {wait_seconds}s"
+            )
         if not self._account or not self.address:
             raise RuntimeError("LuckMail mailbox has not been created")
-        deadline = time.time() + timeout
-        interval = max(1, LUCKMAIL_POLL_INTERVAL or poll_interval)
+        wait_seconds = 180 if timeout is None else timeout
+        deadline = time.time() + wait_seconds
+        interval = max(1, LUCKMAIL_POLL_INTERVAL or poll_interval or 4)
         access_token = ""
         while time.time() < deadline:
             try:
@@ -430,9 +548,18 @@ class LuckMailProvider:
                 access_token = ""
                 log.warning("LuckMail poll failed: %s", type(exc).__name__)
             time.sleep(interval)
-        raise TimeoutError(f"LuckMail received no OreateAI verification link within {timeout}s")
+        raise TimeoutError(f"LuckMail received no OreateAI verification link within {wait_seconds}s")
 
     def close(self) -> None:
+        if self._client:
+            try:
+                if self._order_no and not self._order_finished:
+                    self._client.cancel_order(self._order_no)
+            except Exception as exc:
+                log.warning("LuckMail order cancellation failed: %s", type(exc).__name__)
+            finally:
+                self._client.close()
+                self._client = None
         if self.address:
             with _inventory_lock:
                 _reserved.discard(self.address.lower())

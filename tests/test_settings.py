@@ -29,6 +29,10 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(result["secret_status"]["LUCKMAIL_API_KEY"])
         self.assertFalse(result["values"]["THREADAI_BROWSER_HEADLESS"])
         self.assertEqual(result["values"]["THREADAI_BROWSER_TIMEOUT_MS"], 45000)
+        self.assertEqual(result["values"]["LUCKMAIL_MODE"], "project_order")
+        self.assertEqual(result["values"]["LUCKMAIL_PROJECT_CODE"], "grok")
+        self.assertEqual(result["values"]["LUCKMAIL_EMAIL_TYPE"], "ms_imap")
+        self.assertEqual(result["values"]["LUCKMAIL_DOMAIN"], "outlook.com")
 
     def test_update_preserves_blank_secret_and_supports_explicit_clear(self):
         self.env_path.write_text("LUCKMAIL_API_KEY=private-key\n", encoding="utf-8")
@@ -70,6 +74,30 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "THREADAI_EMAIL_PROVIDER"):
             update_settings(
                 {"THREADAI_EMAIL_PROVIDER": "unknown"},
+                {},
+                [],
+                self.env_path,
+            )
+
+        with self.assertRaisesRegex(ValueError, "LUCKMAIL_MODE"):
+            update_settings(
+                {"LUCKMAIL_MODE": "unknown"},
+                {},
+                [],
+                self.env_path,
+            )
+
+        with self.assertRaisesRegex(ValueError, "LUCKMAIL_EMAIL_TYPE"):
+            update_settings(
+                {"LUCKMAIL_EMAIL_TYPE": "unknown"},
+                {},
+                [],
+                self.env_path,
+            )
+
+        with self.assertRaisesRegex(ValueError, "LUCKMAIL_PROJECT_CODE"):
+            update_settings(
+                {"LUCKMAIL_PROJECT_CODE": ""},
                 {},
                 [],
                 self.env_path,

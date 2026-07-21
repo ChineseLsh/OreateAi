@@ -18,6 +18,8 @@ PROVIDER_CHOICES = {
     "guerrilla",
     "1secmail",
 }
+LUCKMAIL_MODE_CHOICES = {"project_order", "private_inventory"}
+LUCKMAIL_EMAIL_TYPE_CHOICES = {"ms_graph", "ms_imap", "google_variant", "self_built"}
 
 _SECRET_KEYS = {"LUCKMAIL_API_KEY", "LUCKMAIL_API_SECRET"}
 _WRITE_LOCK = threading.RLock()
@@ -39,6 +41,17 @@ def _choice(choices: set[str], default: str) -> Callable[[Any], str]:
         result = _string()(value).lower()
         if result not in choices:
             raise ValueError(f"must be one of: {', '.join(sorted(choices))}")
+        return result
+
+    validate.default = default  # type: ignore[attr-defined]
+    return validate
+
+
+def _nonempty_string(default: str) -> Callable[[Any], str]:
+    def validate(value: Any) -> str:
+        result = _string()(value)
+        if not result:
+            raise ValueError("must not be empty")
         return result
 
     validate.default = default  # type: ignore[attr-defined]
@@ -87,6 +100,12 @@ _SETTINGS: dict[str, Callable[[Any], Any]] = {
     "LUCKMAIL_BASE_URL": _string("https://mails.luckyous.com"),
     "LUCKMAIL_PROXY": _string(""),
     "LUCKMAIL_HTTP_RETRIES": _integer(3, 1, 20),
+    "LUCKMAIL_MODE": _choice(LUCKMAIL_MODE_CHOICES, "project_order"),
+    "LUCKMAIL_PROJECT_CODE": _nonempty_string("grok"),
+    "LUCKMAIL_EMAIL_TYPE": _choice(LUCKMAIL_EMAIL_TYPE_CHOICES, "ms_imap"),
+    "LUCKMAIL_DOMAIN": _nonempty_string("outlook.com"),
+    "LUCKMAIL_ORDER_TIMEOUT": _integer(300, 10, 1_800),
+    "LUCKMAIL_ORDER_POLL_INTERVAL": _integer(3, 1, 60),
     "LUCKMAIL_INVENTORY_CACHE_SECONDS": _integer(60, 0, 86_400),
     "LUCKMAIL_POLL_INTERVAL": _integer(5, 1, 300),
     "LUCKMAIL_RECENT_SECONDS": _integer(900, 60, 86_400),
