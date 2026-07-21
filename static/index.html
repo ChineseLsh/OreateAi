@@ -41,7 +41,8 @@ a{color:var(--accent2);text-decoration:none}a:hover{text-decoration:underline}
   .stat-item .val{font-size:16px}
   .stat-item .lbl{font-size:9px;white-space:nowrap}
   .tabs{padding:0 8px}
-  .tab{padding:12px 13px;white-space:nowrap}
+  .tabs{overflow-x:auto}
+  .tab{padding:12px 13px;white-space:nowrap;flex:0 0 auto}
   .main{padding:16px}
   .card{padding:16px}
 }
@@ -115,6 +116,8 @@ tr:hover td{background:rgba(99,102,241,.03)}
 .filter-btn{padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;transition:all .15s}
 .filter-btn.active,.filter-btn:hover{border-color:var(--accent);color:var(--accent2);background:rgba(99,102,241,.08)}
 .warn-text{color:var(--red);font-size:12px;margin-top:4px}
+.secret-state{font-size:11px;color:var(--text2);margin-left:8px}
+.config-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -133,6 +136,7 @@ tr:hover td{background:rgba(99,102,241,.03)}
     <div class="tab active" onclick="switchTab('gen')">视频生成</div>
     <div class="tab" onclick="switchTab('acc')">账号管理</div>
     <div class="tab" onclick="switchTab('his')">生成历史</div>
+    <div class="tab" onclick="switchTab('cfg')">配置管理</div>
   </div>
 
   <div class="main">
@@ -239,6 +243,60 @@ tr:hover td{background:rgba(99,102,241,.03)}
         </div>
       </div>
     </div>
+
+    <!-- ===== 配置管理 ===== -->
+    <div class="page" id="page-cfg">
+      <div class="row row-2">
+        <div class="card">
+          <div class="card-title">运行配置</div>
+          <div class="field"><label>请求代理</label><input id="cfg-THREADAI_PROXY" autocomplete="off"></div>
+          <div class="field"><label>默认邮箱供应商</label>
+            <select id="cfg-THREADAI_EMAIL_PROVIDER">
+              <option value="auto">自动邮箱</option><option value="luckmail">LuckMail</option>
+              <option value="mailtm">mail.tm</option><option value="linshiyouxiang">临时邮箱网</option>
+              <option value="guerrilla">Guerrilla Mail</option><option value="1secmail">1secmail</option>
+            </select>
+          </div>
+          <div class="row row-2">
+            <div class="field"><label>浏览器 Channel</label><input id="cfg-THREADAI_BROWSER_CHANNEL" autocomplete="off"></div>
+            <div class="field"><label>页面超时（毫秒）</label><input type="number" id="cfg-THREADAI_BROWSER_TIMEOUT_MS" min="1000" max="600000"></div>
+          </div>
+          <div class="field"><label>风控超时（毫秒）</label><input type="number" id="cfg-THREADAI_BROWSER_RISK_TIMEOUT_MS" min="1000" max="300000"></div>
+          <div class="row row-2">
+            <div class="field"><label class="check-option"><input type="checkbox" id="cfg-THREADAI_BROWSER_HEADLESS"><span>无头浏览器</span></label></div>
+            <div class="field"><label class="check-option"><input type="checkbox" id="cfg-THREADAI_ALLOW_PLUS_EMAIL"><span>允许加号邮箱</span></label></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">LuckMail</div>
+          <div class="field"><label>API Key <span class="secret-state" id="status-LUCKMAIL_API_KEY"></span></label><input type="password" id="secret-LUCKMAIL_API_KEY" autocomplete="new-password"></div>
+          <div class="field"><label class="check-option"><input type="checkbox" id="clear-LUCKMAIL_API_KEY"><span>清除 API Key</span></label></div>
+          <div class="field"><label>API Secret <span class="secret-state" id="status-LUCKMAIL_API_SECRET"></span></label><input type="password" id="secret-LUCKMAIL_API_SECRET" autocomplete="new-password"></div>
+          <div class="field"><label class="check-option"><input type="checkbox" id="clear-LUCKMAIL_API_SECRET"><span>清除 API Secret</span></label></div>
+          <div class="field"><label>API 地址</label><input id="cfg-LUCKMAIL_BASE_URL" autocomplete="off"></div>
+          <div class="row row-2">
+            <div class="field"><label>API 代理</label><input id="cfg-LUCKMAIL_PROXY" autocomplete="off"></div>
+            <div class="field"><label>IMAP 代理</label><input id="cfg-LUCKMAIL_IMAP_PROXY" autocomplete="off"></div>
+          </div>
+          <div class="field"><label>IMAP Hosts</label><input id="cfg-LUCKMAIL_IMAP_HOSTS" autocomplete="off"></div>
+          <div class="row row-3">
+            <div class="field"><label>请求次数</label><input type="number" id="cfg-LUCKMAIL_HTTP_RETRIES" min="1" max="20"></div>
+            <div class="field"><label>库存缓存（秒）</label><input type="number" id="cfg-LUCKMAIL_INVENTORY_CACHE_SECONDS" min="0" max="86400"></div>
+            <div class="field"><label>轮询间隔（秒）</label><input type="number" id="cfg-LUCKMAIL_POLL_INTERVAL" min="1" max="300"></div>
+          </div>
+          <div class="row row-2">
+            <div class="field"><label>邮件时效（秒）</label><input type="number" id="cfg-LUCKMAIL_RECENT_SECONDS" min="60" max="86400"></div>
+            <div class="field"><label>检查邮件数</label><input type="number" id="cfg-LUCKMAIL_IMAP_LAST_N" min="1" max="500"></div>
+          </div>
+          <div class="field"><label class="check-option"><input type="checkbox" id="cfg-LUCKMAIL_REQUIRE_RECIPIENT_MATCH"><span>匹配收件人</span></label></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="config-actions"><button class="btn btn-primary" id="btn-config-save" onclick="saveConfig()">保存配置</button><span class="upload-hint">保存后重启服务生效</span></div>
+        <div class="log-panel" id="config-log"><div class="info">就绪</div></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -256,6 +314,16 @@ const S = {active:'可用',exhausted:'耗尽',expired:'过期',done:'完成',gen
 const CHECKIN_STATUS = {claimed:'领取成功',already_claimed:'今日已签到',claim_failed:'领取失败',login_failed:'登录失败',busy:'忙碌',error:'异常'};
 const NO_HUMAN = ['Seedance 2.0 Mini','Seedance 2.0','Seedance 2.0 Fast'];
 let allVideos = [], hisFilter = '', activeTasks = {};
+let configLoaded = false;
+const CONFIG_FIELDS = [
+  'THREADAI_PROXY','THREADAI_EMAIL_PROVIDER','THREADAI_ALLOW_PLUS_EMAIL',
+  'THREADAI_BROWSER_CHANNEL','THREADAI_BROWSER_HEADLESS','THREADAI_BROWSER_TIMEOUT_MS',
+  'THREADAI_BROWSER_RISK_TIMEOUT_MS','LUCKMAIL_BASE_URL','LUCKMAIL_PROXY',
+  'LUCKMAIL_HTTP_RETRIES','LUCKMAIL_INVENTORY_CACHE_SECONDS','LUCKMAIL_POLL_INTERVAL',
+  'LUCKMAIL_RECENT_SECONDS','LUCKMAIL_IMAP_HOSTS','LUCKMAIL_IMAP_LAST_N',
+  'LUCKMAIL_REQUIRE_RECIPIENT_MATCH','LUCKMAIL_IMAP_PROXY'
+];
+const CONFIG_SECRETS = ['LUCKMAIL_API_KEY','LUCKMAIL_API_SECRET'];
 
 function ts2str(ts){ return ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-' }
 function badgeCls(s){ return s==='active'||s==='done'?'badge-green':s==='exhausted'||s==='generating'?s==='generating'?'badge-purple':'badge-yellow':s==='error'||s==='expired'?'badge-red':'badge-gray' }
@@ -270,10 +338,51 @@ async function apiFetch(url,options){
 
 // Tabs
 function switchTab(id){
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['gen','acc','his'][i]===id));
-  document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',['gen','acc','his'][i]===id));
+  const ids=['gen','acc','his','cfg'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',ids[i]===id));
+  document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',ids[i]===id));
   if(id==='acc') fetchAccounts();
   if(id==='his') fetchVideos();
+  if(id==='cfg'&&!configLoaded) loadConfig();
+}
+
+// Configuration
+function setConfigForm(data){
+  CONFIG_FIELDS.forEach(key=>{
+    const input=document.getElementById('cfg-'+key);
+    if(!input||!(key in data.values)) return;
+    if(input.type==='checkbox') input.checked=Boolean(data.values[key]);
+    else input.value=data.values[key]??'';
+  });
+  CONFIG_SECRETS.forEach(key=>{
+    const status=document.getElementById('status-'+key);
+    status.textContent=data.secret_status[key]?'已配置':'未配置';
+  });
+}
+async function loadConfig(){
+  try{setConfigForm(await apiFetch('/api/config'));configLoaded=true}
+  catch(e){addLog('config-log','加载失败: '+e.message,'err')}
+}
+async function saveConfig(){
+  const btn=document.getElementById('btn-config-save');btn.disabled=true;btn.textContent='保存中...';
+  const values={};
+  CONFIG_FIELDS.forEach(key=>{
+    const input=document.getElementById('cfg-'+key);
+    values[key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;
+  });
+  const secrets={},clear_secrets=[];
+  CONFIG_SECRETS.forEach(key=>{
+    const value=document.getElementById('secret-'+key).value;
+    if(value) secrets[key]=value;
+    if(document.getElementById('clear-'+key).checked) clear_secrets.push(key);
+  });
+  try{
+    const data=await apiFetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values,secrets,clear_secrets})});
+    setConfigForm(data);
+    CONFIG_SECRETS.forEach(key=>{document.getElementById('secret-'+key).value='';document.getElementById('clear-'+key).checked=false});
+    addLog('config-log',data.restart_required?'保存成功，重启服务后生效':'配置未变化','ok');
+  }catch(e){addLog('config-log','保存失败: '+e.message,'err')}
+  btn.disabled=false;btn.textContent='保存配置';
 }
 
 // Stats

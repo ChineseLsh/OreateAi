@@ -38,6 +38,30 @@ class ApiTests(unittest.TestCase):
         register_account.assert_called_once_with("luckmail")
         self.assertEqual(server.tasks_status["register-task"]["status"], "done")
 
+    def test_config_response_uses_secret_safe_settings_service(self):
+        expected = {
+            "values": {"THREADAI_BROWSER_HEADLESS": True},
+            "secret_status": {"LUCKMAIL_API_KEY": True},
+            "restart_required": False,
+        }
+        with patch.object(server, "read_settings", return_value=expected):
+            result = asyncio.run(server.api_config())
+
+        self.assertEqual(result, expected)
+
+    def test_config_update_maps_validation_errors_to_422(self):
+        request = server.ConfigReq(values={"UNKNOWN": "value"})
+        with patch.object(
+            server,
+            "update_settings",
+            side_effect=ValueError("unsupported setting: UNKNOWN"),
+        ):
+            with self.assertRaises(server.HTTPException) as caught:
+                asyncio.run(server.api_config_update(request))
+
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertIn("UNKNOWN", caught.exception.detail)
+
     def test_register_task_returns_underlying_failure_reason(self):
         with patch.object(
             server,

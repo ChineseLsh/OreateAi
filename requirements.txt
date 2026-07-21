@@ -3,6 +3,7 @@ cryptography>=43.0
 curl_cffi>=0.15
 fastapi>=0.115
 playwright>=1.49
+python-dotenv>=1.0
 python-multipart>=0.0.9
 PySocks>=1.7
 uvicorn>=0.30

@@ -10,7 +10,7 @@ import fastapi
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -24,6 +24,7 @@ from core.pool import (
     auto_acquire, release_account, refresh_points,
     register_and_add_to_pool, restore_session,
 )
+from core.settings import read_settings, update_settings
 from modules.login import daily_checkin_all
 from modules.fission import chain_fission, seed_and_fission
 from modules.video import generate_video, get_remaining_points, resolve_video_spec
@@ -70,6 +71,12 @@ class VideoReq(BaseModel):
     image_url: str = ""
 
 
+class ConfigReq(BaseModel):
+    values: dict = Field(default_factory=dict)
+    secrets: dict = Field(default_factory=dict)
+    clear_secrets: list[str] = Field(default_factory=list)
+
+
 # --- Pages ---
 
 @app.get("/")
@@ -82,6 +89,21 @@ async def index():
 @app.get("/api/stats")
 async def api_stats():
     return get_stats()
+
+
+# --- API: Configuration ---
+
+@app.get("/api/config")
+async def api_config():
+    return read_settings()
+
+
+@app.put("/api/config")
+async def api_config_update(req: ConfigReq):
+    try:
+        return update_settings(req.values, req.secrets, req.clear_secrets)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # --- API: Accounts ---
