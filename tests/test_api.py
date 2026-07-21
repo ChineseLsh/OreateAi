@@ -38,6 +38,38 @@ class ApiTests(unittest.TestCase):
         register_account.assert_called_once_with("luckmail")
         self.assertEqual(server.tasks_status["register-task"]["status"], "done")
 
+    def test_mailbox_import_returns_counts_without_submitted_secrets(self):
+        request = server.MailboxImportReq(
+            text="mailbox@example.com----secret----client-id----refresh-token"
+        )
+        expected = {"imported": 1, "updated": 0, "invalid_lines": []}
+        with patch.object(server, "import_mailboxes", return_value=expected):
+            result = asyncio.run(server.api_import_mailboxes(request))
+
+        self.assertEqual(result, expected)
+        self.assertNotIn("secret", str(result))
+        self.assertNotIn("refresh-token", str(result))
+
+    def test_mailbox_list_uses_safe_database_projection(self):
+        expected = [{
+            "address": "mailbox@example.com",
+            "type": "ms_imap",
+            "status": "available",
+            "created_at": 1,
+            "updated_at": 1,
+        }]
+        with patch.object(server, "list_mailboxes", return_value=expected):
+            result = asyncio.run(server.api_mailboxes())
+
+        self.assertEqual(result, expected)
+
+    def test_mailbox_reset_rejects_non_resettable_address(self):
+        with patch.object(server, "reset_mailbox", return_value=False):
+            with self.assertRaises(server.HTTPException) as caught:
+                asyncio.run(server.api_reset_mailbox("mailbox@example.com"))
+
+        self.assertEqual(caught.exception.status_code, 409)
+
     def test_config_response_uses_secret_safe_settings_service(self):
         expected = {
             "values": {"THREADAI_BROWSER_HEADLESS": True},

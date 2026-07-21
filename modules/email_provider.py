@@ -342,6 +342,10 @@ def build_email_provider(name: str | None = None, address: str = ""):
         from modules.luckmail import LuckMailProvider
 
         return LuckMailProvider()
+    if provider_name == "self_pool":
+        from modules.self_pool import SelfPoolEmailProvider
+
+        return SelfPoolEmailProvider()
     providers = {
         "auto": AutoEmailProvider,
         "mailtm": TempMailProvider,

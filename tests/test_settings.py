@@ -60,6 +60,14 @@ class SettingsTests(unittest.TestCase):
         )
         self.assertFalse(result["secret_status"]["LUCKMAIL_API_KEY"])
 
+        result = update_settings(
+            {"THREADAI_EMAIL_PROVIDER": "self_pool"},
+            {},
+            [],
+            self.env_path,
+        )
+        self.assertEqual(result["values"]["THREADAI_EMAIL_PROVIDER"], "self_pool")
+
     def test_update_rejects_unknown_and_invalid_values(self):
         with self.assertRaisesRegex(ValueError, "unsupported setting"):
             update_settings({"UNKNOWN_SETTING": "value"}, {}, [], self.env_path)

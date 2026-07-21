@@ -13,6 +13,7 @@ ENV_PATH = PROJECT_ROOT / ".env"
 PROVIDER_CHOICES = {
     "auto",
     "luckmail",
+    "self_pool",
     "mailtm",
     "linshiyouxiang",
     "guerrilla",

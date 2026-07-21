@@ -18,7 +18,8 @@ from core.client import OreateClient
 from core.db import (
     init_db, migrate_jsonl, list_accounts, list_videos, get_stats,
     save_video, update_video, update_account_points, set_account_status,
-    get_account, try_lock_account, unlock_account,
+    get_account, try_lock_account, unlock_account, list_mailboxes,
+    reset_mailbox,
 )
 from core.pool import (
     auto_acquire, release_account, refresh_points,
@@ -29,6 +30,7 @@ from modules.login import daily_checkin_all
 from modules.fission import chain_fission, seed_and_fission
 from modules.video import generate_video, get_remaining_points, resolve_video_spec
 from modules.upload import upload_image_bytes as upload_image
+from modules.self_pool import import_mailboxes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("api")
@@ -77,6 +79,10 @@ class ConfigReq(BaseModel):
     clear_secrets: list[str] = Field(default_factory=list)
 
 
+class MailboxImportReq(BaseModel):
+    text: str = Field(min_length=1, max_length=5_000_000)
+
+
 # --- Pages ---
 
 @app.get("/")
@@ -107,6 +113,23 @@ async def api_config_update(req: ConfigReq):
 
 
 # --- API: Accounts ---
+
+@app.get("/api/mailboxes")
+async def api_mailboxes():
+    return list_mailboxes()
+
+
+@app.post("/api/mailboxes/import")
+async def api_import_mailboxes(req: MailboxImportReq):
+    return import_mailboxes(req.text)
+
+
+@app.post("/api/mailboxes/{address}/reset")
+async def api_reset_mailbox(address: str):
+    if not reset_mailbox(address):
+        raise HTTPException(409, "mailbox is not resettable")
+    return {"status": "available"}
+
 
 @app.get("/api/accounts")
 async def api_accounts():

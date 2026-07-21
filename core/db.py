@@ -1,4 +1,4 @@
-"""SQLite 持久化 — accounts + videos"""
+"""SQLite persistence for accounts, mailboxes, and videos."""
 
 import json
 import sqlite3
@@ -62,7 +62,21 @@ def init_db():
         created_at  INTEGER DEFAULT 0,
         FOREIGN KEY (account_email) REFERENCES accounts(email)
     );
+    CREATE TABLE IF NOT EXISTS mailboxes (
+        address       TEXT PRIMARY KEY,
+        password      TEXT NOT NULL,
+        client_id     TEXT NOT NULL,
+        refresh_token TEXT NOT NULL,
+        type           TEXT DEFAULT 'ms_imap',
+        status         TEXT DEFAULT 'available',
+        created_at     INTEGER DEFAULT 0,
+        updated_at     INTEGER DEFAULT 0
+    );
     """)
+    c.execute(
+        "UPDATE mailboxes SET status='used', updated_at=? WHERE status='reserved'",
+        (int(time.time()),),
+    )
     c.commit()
 
 
@@ -201,6 +215,146 @@ def count_active_accounts(min_points: int = 20) -> int:
     c = _conn()
     row = c.execute("SELECT COUNT(*) as n FROM accounts WHERE status='active' AND points>=?", (min_points,)).fetchone()
     return row["n"]
+
+
+# --- Mailbox ops ---
+
+@_serialized
+def upsert_mailboxes(records: list[dict]) -> dict[str, int]:
+    c = _conn()
+    now = int(time.time())
+    imported = 0
+    updated = 0
+    for record in records:
+        address = str(record["address"]).strip().lower()
+        existing = c.execute(
+            "SELECT status, created_at FROM mailboxes WHERE address=?",
+            (address,),
+        ).fetchone()
+        account_exists = c.execute(
+            "SELECT 1 FROM accounts WHERE lower(email)=?",
+            (address,),
+        ).fetchone()
+        if account_exists:
+            status = "registered"
+        elif existing and existing["status"] in {"reserved", "used", "registered"}:
+            status = existing["status"]
+        else:
+            status = "available"
+        created_at = existing["created_at"] if existing else now
+        c.execute(
+            """INSERT OR REPLACE INTO mailboxes
+               (address, password, client_id, refresh_token, type, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                address,
+                record["password"],
+                record["client_id"],
+                record["refresh_token"],
+                "ms_imap",
+                status,
+                created_at,
+                now,
+            ),
+        )
+        if existing:
+            updated += 1
+        else:
+            imported += 1
+    c.commit()
+    return {"imported": imported, "updated": updated}
+
+
+@_serialized
+def acquire_mailbox() -> dict | None:
+    c = _conn()
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        row = c.execute(
+            """SELECT m.* FROM mailboxes m
+               LEFT JOIN accounts a ON lower(a.email)=m.address
+               WHERE m.status='available' AND a.email IS NULL
+               ORDER BY m.created_at ASC, m.address ASC LIMIT 1"""
+        ).fetchone()
+        if row is None:
+            c.commit()
+            return None
+        changed = c.execute(
+            "UPDATE mailboxes SET status='reserved', updated_at=? "
+            "WHERE address=? AND status='available'",
+            (int(time.time()), row["address"]),
+        ).rowcount
+        c.commit()
+        return dict(row) if changed == 1 else None
+    except Exception:
+        c.rollback()
+        raise
+
+
+@_serialized
+def get_mailbox(address: str) -> dict | None:
+    c = _conn()
+    row = c.execute(
+        "SELECT * FROM mailboxes WHERE address=?",
+        (address.strip().lower(),),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+@_serialized
+def list_mailboxes() -> list[dict]:
+    c = _conn()
+    rows = c.execute(
+        """SELECT address, type, status, created_at, updated_at
+           FROM mailboxes ORDER BY created_at DESC, address ASC"""
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@_serialized
+def finalize_mailbox(address: str) -> str:
+    c = _conn()
+    normalized = address.strip().lower()
+    account_exists = c.execute(
+        "SELECT 1 FROM accounts WHERE lower(email)=?",
+        (normalized,),
+    ).fetchone()
+    status = "registered" if account_exists else "used"
+    c.execute(
+        "UPDATE mailboxes SET status=?, updated_at=? WHERE address=?",
+        (status, int(time.time()), normalized),
+    )
+    c.commit()
+    return status
+
+
+@_serialized
+def reset_mailbox(address: str) -> bool:
+    c = _conn()
+    normalized = address.strip().lower()
+    account_exists = c.execute(
+        "SELECT 1 FROM accounts WHERE lower(email)=?",
+        (normalized,),
+    ).fetchone()
+    if account_exists:
+        return False
+    changed = c.execute(
+        "UPDATE mailboxes SET status='available', updated_at=? "
+        "WHERE address=? AND status='used'",
+        (int(time.time()), normalized),
+    ).rowcount
+    c.commit()
+    return changed == 1
+
+
+@_serialized
+def update_mailbox_refresh_token(address: str, refresh_token: str) -> None:
+    c = _conn()
+    c.execute(
+        "UPDATE mailboxes SET refresh_token=?, updated_at=? WHERE address=?",
+        (refresh_token, int(time.time()), address.strip().lower()),
+    )
+    c.commit()
 
 
 # --- Video ops ---

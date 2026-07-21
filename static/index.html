@@ -120,6 +120,8 @@ tr:hover td{background:rgba(99,102,241,.03)}
 .config-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .config-section{border-top:1px solid var(--border);padding-top:14px;margin-top:16px}
 .config-section-title{font-size:12px;font-weight:600;color:var(--text3);margin-bottom:12px}
+.pool-summary{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--text2)}
+.pool-summary strong{color:var(--text);font-size:14px}
 </style>
 </head>
 <body>
@@ -208,6 +210,7 @@ tr:hover td{background:rgba(99,102,241,.03)}
           <select id="reg-provider" style="width:170px" aria-label="邮箱供应商">
             <option value="auto">自动邮箱</option>
             <option value="luckmail" selected>LuckMail</option>
+            <option value="self_pool">自有邮箱池</option>
             <option value="mailtm">mail.tm</option>
             <option value="linshiyouxiang">临时邮箱网</option>
             <option value="guerrilla">Guerrilla Mail</option>
@@ -225,6 +228,24 @@ tr:hover td{background:rgba(99,102,241,.03)}
         <div style="overflow-x:auto">
           <table><thead><tr><th>#</th><th>邮箱</th><th>积分</th><th>状态</th><th>最近使用</th><th>操作</th></tr></thead>
           <tbody id="acc-table"><tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text2)">加载中...</td></tr></tbody></table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">自有邮箱池</div>
+        <div class="row row-2">
+          <div class="field">
+            <label>批量导入</label>
+            <textarea id="mailbox-import" autocomplete="off" spellcheck="false" placeholder="邮箱----邮箱密码----client_id----refresh_token"></textarea>
+          </div>
+          <div>
+            <div class="pool-summary" id="mailbox-summary"></div>
+            <button class="btn btn-primary" onclick="importMailboxes()" id="btn-mailbox-import">导入邮箱</button>
+            <div class="log-panel" id="mailbox-log"><div class="info">就绪</div></div>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table><thead><tr><th>#</th><th>邮箱</th><th>类型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <tbody id="mailbox-table"><tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text2)">加载中...</td></tr></tbody></table>
         </div>
       </div>
     </div>
@@ -254,7 +275,7 @@ tr:hover td{background:rgba(99,102,241,.03)}
           <div class="field"><label>请求代理</label><input id="cfg-THREADAI_PROXY" autocomplete="off"></div>
           <div class="field"><label>默认邮箱供应商</label>
             <select id="cfg-THREADAI_EMAIL_PROVIDER">
-              <option value="auto">自动邮箱</option><option value="luckmail">LuckMail</option>
+              <option value="auto">自动邮箱</option><option value="luckmail">LuckMail</option><option value="self_pool">自有邮箱池</option>
               <option value="mailtm">mail.tm</option><option value="linshiyouxiang">临时邮箱网</option>
               <option value="guerrilla">Guerrilla Mail</option><option value="1secmail">1secmail</option>
             </select>
@@ -350,7 +371,7 @@ tr:hover td{background:rgba(99,102,241,.03)}
 </div>
 
 <script>
-const S = {active:'可用',exhausted:'耗尽',expired:'过期',done:'完成',generating:'生成中',error:'失败',pending:'排队中'};
+const S = {active:'可用',available:'可用',reserved:'使用中',used:'已使用',registered:'已注册',exhausted:'耗尽',expired:'过期',done:'完成',generating:'生成中',error:'失败',pending:'排队中'};
 const CHECKIN_STATUS = {claimed:'领取成功',already_claimed:'今日已签到',claim_failed:'领取失败',login_failed:'登录失败',busy:'忙碌',error:'异常'};
 const NO_HUMAN = ['Seedance 2.0 Mini','Seedance 2.0','Seedance 2.0 Fast'];
 let allVideos = [], hisFilter = '', activeTasks = {};
@@ -369,7 +390,7 @@ const CONFIG_FIELDS = [
 const CONFIG_SECRETS = ['LUCKMAIL_API_KEY','LUCKMAIL_API_SECRET'];
 
 function ts2str(ts){ return ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-' }
-function badgeCls(s){ return s==='active'||s==='done'?'badge-green':s==='exhausted'||s==='generating'?s==='generating'?'badge-purple':'badge-yellow':s==='error'||s==='expired'?'badge-red':'badge-gray' }
+function badgeCls(s){ return ['active','available','registered','done'].includes(s)?'badge-green':s==='reserved'||s==='generating'?'badge-purple':s==='used'||s==='exhausted'?'badge-yellow':s==='error'||s==='expired'?'badge-red':'badge-gray' }
 function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function safeUrl(value){try{const url=new URL(String(value||''),location.origin);return ['http:','https:'].includes(url.protocol)?url.href:''}catch(e){return ''}}
 async function apiFetch(url,options){
@@ -385,6 +406,7 @@ function switchTab(id){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',ids[i]===id));
   document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',ids[i]===id));
   if(id==='acc') fetchAccounts();
+  if(id==='acc') fetchMailboxes();
   if(id==='his') fetchVideos();
   if(id==='cfg'&&!configLoaded) loadConfig();
 }
@@ -461,6 +483,53 @@ async function fetchAccounts(){
     </tr>`).join('');
     tb.querySelectorAll('[data-refresh-email]').forEach(button=>button.addEventListener('click',()=>refreshAccount(button.dataset.refreshEmail)));
   }catch(e){}
+}
+
+async function fetchMailboxes(){
+  try{
+    const mailboxes=await apiFetch('/api/mailboxes');
+    const counts={available:0,reserved:0,used:0,registered:0};
+    mailboxes.forEach(mailbox=>{if(mailbox.status in counts) counts[mailbox.status]++});
+    document.getElementById('mailbox-summary').innerHTML=`
+      <span>总数 <strong>${mailboxes.length}</strong></span>
+      <span>可用 <strong>${counts.available}</strong></span>
+      <span>使用中 <strong>${counts.reserved}</strong></span>
+      <span>已使用 <strong>${counts.used}</strong></span>
+      <span>已注册 <strong>${counts.registered}</strong></span>`;
+    const tb=document.getElementById('mailbox-table');
+    if(!mailboxes.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text2)">暂无邮箱</td></tr>';return}
+    tb.innerHTML=mailboxes.map((mailbox,index)=>`<tr>
+      <td>${index+1}</td><td>${esc(mailbox.address)}</td><td>${esc(mailbox.type)}</td>
+      <td><span class="badge ${badgeCls(mailbox.status)}">${esc(S[mailbox.status]||mailbox.status)}</span></td>
+      <td>${ts2str(mailbox.updated_at)}</td>
+      <td>${mailbox.status==='used'?`<button class="btn btn-ghost btn-sm" data-reset-mailbox="${esc(mailbox.address)}">重新启用</button>`:'-'}</td>
+    </tr>`).join('');
+    tb.querySelectorAll('[data-reset-mailbox]').forEach(button=>button.addEventListener('click',()=>resetMailbox(button.dataset.resetMailbox)));
+  }catch(e){addLog('mailbox-log','加载失败: '+e.message,'err')}
+}
+
+async function importMailboxes(){
+  const btn=document.getElementById('btn-mailbox-import');
+  const input=document.getElementById('mailbox-import');
+  const text=input.value.trim();
+  if(!text) return;
+  btn.disabled=true;btn.textContent='导入中...';
+  try{
+    const result=await apiFetch('/api/mailboxes/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    const invalid=result.invalid_lines.length?`, 无效行 ${result.invalid_lines.join(', ')}`:'';
+    addLog('mailbox-log',`新增 ${result.imported}，更新 ${result.updated}${invalid}`,result.invalid_lines.length?'info':'ok');
+    fetchMailboxes();
+  }catch(e){addLog('mailbox-log','导入失败: '+e.message,'err')}
+  input.value='';
+  btn.disabled=false;btn.textContent='导入邮箱';
+}
+
+async function resetMailbox(address){
+  try{
+    await apiFetch('/api/mailboxes/'+encodeURIComponent(address)+'/reset',{method:'POST'});
+    addLog('mailbox-log','已重新启用: '+address,'ok');
+    fetchMailboxes();
+  }catch(e){addLog('mailbox-log','重新启用失败: '+e.message,'err')}
 }
 
 // Videos
@@ -614,7 +683,7 @@ async function pollBg(tid,logId,onDone){
     try{
       const d=await apiFetch('/api/task/'+encodeURIComponent(tid));
       if(d.status==='done'){onDone(d);return}
-      if(d.status==='error'){addLog(logId,'失败: '+(d.result?.error||''),'err');return}
+      if(d.status==='error'){addLog(logId,'失败: '+(d.result?.error||''),'err');fetchMailboxes();return}
       if(n%5===0) addLog(logId,'处理中...','info');
     }catch(e){addLog(logId,'查询失败','err');return}
   }
@@ -628,7 +697,7 @@ async function doRegister(){
     const d=await apiFetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider})});
     await pollBg(d.task_id,'reg-log',res=>{
       addLog('reg-log',`注册成功: ${res.result.email} (${res.result.points}积分)`,'ok');
-      fetchAccounts();fetchStats();
+      fetchAccounts();fetchMailboxes();fetchStats();
     });
   }catch(e){addLog('reg-log','注册失败: '+e.message,'err')}
   btn.disabled=false;btn.textContent='注册单号';
@@ -669,7 +738,7 @@ async function doCheckin(){
 }
 
 // Init
-fetchStats();fetchAccounts();fetchVideos();loadConfig();
+fetchStats();fetchAccounts();fetchMailboxes();fetchVideos();loadConfig();
 setInterval(fetchStats,8000);
 </script>
 </body>
