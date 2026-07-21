@@ -557,7 +557,8 @@ class LuckMailProvider:
                     raise RuntimeError(f"LuckMail project order ended with status {status}")
                 time.sleep(interval)
             raise TimeoutError(
-                f"LuckMail project order received no OreateAI verification code within {wait_seconds}s"
+                f"LuckMail project {LUCKMAIL_PROJECT_CODE} received no OreateAI tokenID "
+                f"within {wait_seconds}s; its mail matcher may not support OreateAI"
             )
         if not self._account or not self.address:
             raise RuntimeError("LuckMail mailbox has not been created")

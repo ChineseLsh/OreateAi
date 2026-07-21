@@ -7,6 +7,7 @@ from unittest.mock import patch
 import httpx
 
 from modules import luckmail
+from modules.email_provider import AutoEmailProvider
 
 
 class _FakeIMAP:
@@ -300,6 +301,24 @@ class LuckMailTests(unittest.TestCase):
             fake.cancelled,
             ["ORD-old-1", "ORD-old-2", "ORD-new"],
         )
+
+    def test_auto_provider_does_not_override_inner_timeout_defaults(self):
+        class InnerProvider:
+            def __init__(self):
+                self.calls = []
+
+            def wait_for_verification_link(self, **kwargs):
+                self.calls.append(kwargs)
+                return "user@outlook.com", "token-id"
+
+        inner = InnerProvider()
+        provider = AutoEmailProvider()
+        provider._inner = inner
+
+        provider.wait_for_verification_link()
+        provider.wait_for_verification_link(timeout=30, poll_interval=2)
+
+        self.assertEqual(inner.calls, [{}, {"timeout": 30, "poll_interval": 2}])
 
 
 if __name__ == "__main__":

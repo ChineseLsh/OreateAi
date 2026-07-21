@@ -207,7 +207,7 @@ tr:hover td{background:rgba(99,102,241,.03)}
         <div class="btn-group" style="margin-bottom:12px">
           <select id="reg-provider" style="width:170px" aria-label="邮箱供应商">
             <option value="auto">自动邮箱</option>
-            <option value="luckmail">LuckMail</option>
+            <option value="luckmail" selected>LuckMail</option>
             <option value="mailtm">mail.tm</option>
             <option value="linshiyouxiang">临时邮箱网</option>
             <option value="guerrilla">Guerrilla Mail</option>
@@ -400,6 +400,9 @@ function setConfigForm(data){
     const status=document.getElementById('status-'+key);
     status.textContent=data.secret_status[key]?'已配置':'未配置';
   });
+  const provider=data.values.THREADAI_EMAIL_PROVIDER;
+  const registrationProvider=document.getElementById('reg-provider');
+  if(provider&&registrationProvider.querySelector(`option[value="${provider}"]`)) registrationProvider.value=provider;
   toggleLuckMailMode();
 }
 function toggleLuckMailMode(){
@@ -665,7 +668,7 @@ async function doCheckin(){
 }
 
 // Init
-fetchStats();fetchAccounts();fetchVideos();
+fetchStats();fetchAccounts();fetchVideos();loadConfig();
 setInterval(fetchStats,8000);
 </script>
 </body>

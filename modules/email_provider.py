@@ -301,8 +301,17 @@ class AutoEmailProvider:
                 log.warning(f"{cls.__name__} failed ({e})")
         raise RuntimeError("all email providers failed")
 
-    def wait_for_verification_link(self, timeout: int = 180, poll_interval: int = 4) -> tuple[str, str]:
-        return self._inner.wait_for_verification_link(timeout, poll_interval)
+    def wait_for_verification_link(
+        self,
+        timeout: int | None = None,
+        poll_interval: int | None = None,
+    ) -> tuple[str, str]:
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if poll_interval is not None:
+            kwargs["poll_interval"] = poll_interval
+        return self._inner.wait_for_verification_link(**kwargs)
 
     def close(self):
         if self._inner:
