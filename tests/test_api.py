@@ -1,6 +1,9 @@
 import asyncio
+import io
 import unittest
 from unittest.mock import Mock, patch
+
+from fastapi import UploadFile
 
 from api import server
 from modules.video import VideoResult, VideoSpec
@@ -37,6 +40,30 @@ class ApiTests(unittest.TestCase):
 
         register_account.assert_called_once_with("luckmail")
         self.assertEqual(server.tasks_status["register-task"]["status"], "done")
+
+    def test_video_upload_uses_video_source_and_returns_file_metadata(self):
+        client = Mock()
+        upload = UploadFile(file=io.BytesIO(b"png-data"), filename="cute.png")
+        with (
+            patch.object(
+                server,
+                "auto_acquire",
+                return_value=(client, {"email": "base@example.invalid"}),
+            ),
+            patch.object(server, "upload_image", return_value="aivideo/upload/cute.png") as upload_image,
+            patch.object(server, "release_account"),
+        ):
+            result = server.api_upload(upload, "cute.png")
+
+        upload_image.assert_called_once_with(
+            client,
+            b"png-data",
+            "cute",
+            "png",
+            source="aiVideo",
+        )
+        self.assertEqual(result["filename"], "cute.png")
+        self.assertEqual(result["size"], 8)
 
     def test_mailbox_import_returns_counts_without_submitted_secrets(self):
         request = server.MailboxImportReq(
@@ -168,6 +195,9 @@ class ApiTests(unittest.TestCase):
             prompt="test prompt",
             resolution="720",
             is_audio=True,
+            image_url="aivideo/upload/cute.png",
+            image_name="cute.png",
+            image_size=12345,
         )
 
         with (
@@ -197,6 +227,8 @@ class ApiTests(unittest.TestCase):
         acquire.assert_called_once_with(min_points=68)
         self.assertEqual(generate.call_args.kwargs["ai_type"], 14201)
         self.assertEqual(generate.call_args.kwargs["resolution"], "720")
+        self.assertEqual(generate.call_args.kwargs["image_name"], "cute.png")
+        self.assertEqual(generate.call_args.kwargs["image_size"], 12345)
         result = server.tasks_status["video-task"]
         self.assertEqual(result["status"], "done")
         self.assertEqual(result["result"]["local_path"], "")
@@ -208,6 +240,60 @@ class ApiTests(unittest.TestCase):
         )
         self.assertIn("warning", result["result"])
         self.assertIn("point refresh failed", result["result"]["warning"])
+
+    def test_video_quarantines_account_rejected_as_spam(self):
+        spec = VideoSpec(
+            model_name="Seedance 2.0 Mini",
+            duration=5,
+            resolution="480",
+            is_audio=False,
+            ai_type=14198,
+            point=30,
+            scene="text_or_image",
+        )
+        config_context = Mock()
+        config_context.__enter__ = Mock(return_value=object())
+        config_context.__exit__ = Mock(return_value=False)
+        account_client = Mock()
+        request = server.VideoReq(prompt="test", resolution="480", is_audio=False)
+        rejected = VideoResult(
+            False,
+            error="upstream video error 212361: spam user",
+            error_code=212361,
+        )
+        lifecycle = []
+
+        with (
+            patch.object(server, "OreateClient", return_value=config_context),
+            patch.object(server, "resolve_video_spec", return_value=spec),
+            patch.object(
+                server,
+                "auto_acquire",
+                return_value=(
+                    account_client,
+                    {"email": "spam@example.invalid", "points": 80},
+                ),
+            ),
+            patch.object(server, "save_video"),
+            patch.object(server, "get_remaining_points", return_value=80),
+            patch.object(server, "generate_video", return_value=rejected),
+            patch.object(server, "update_video"),
+            patch.object(
+                server,
+                "set_account_status",
+                side_effect=lambda *_: lifecycle.append("quarantine"),
+            ) as set_status,
+            patch.object(
+                server,
+                "release_account",
+                side_effect=lambda *_: lifecycle.append("release"),
+            ),
+        ):
+            server._bg_video("video-task", request)
+
+        set_status.assert_called_once_with("spam@example.invalid", "error")
+        self.assertEqual(lifecycle, ["release", "quarantine"])
+        self.assertEqual(server.tasks_status["video-task"]["status"], "error")
 
 
 if __name__ == "__main__":

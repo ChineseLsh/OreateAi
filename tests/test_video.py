@@ -174,6 +174,53 @@ class VideoTests(unittest.TestCase):
             },
         )
 
+    def test_submit_video_sse_preserves_uploaded_image_metadata(self):
+        client = _SSEClient()
+
+        result = video.submit_video_sse(
+            client,
+            "chat-1",
+            "make a test video",
+            resolution="720",
+            duration=5,
+            is_audio=True,
+            image_url="aivideo/upload/cute.png",
+            image_name="cute.png",
+            image_size=12345,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            client.body["messages"][0]["attachments"],
+            [{
+                "bos_url": "aivideo/upload/cute.png",
+                "bosUrl": "aivideo/upload/cute.png",
+                "doc_title": "cute.png",
+                "doc_type": "png",
+                "size": 12345,
+                "flag": "upload",
+                "type": "file",
+                "status": 1,
+            }],
+        )
+
+    def test_submit_video_sse_preserves_upstream_error_code_and_message(self):
+        client = _SSEClient()
+        with patch.object(
+            client,
+            "stream_sse",
+            return_value=[{
+                "event": "error",
+                "logId": "log-2",
+                "data": {"code": 212361, "msg": "spam user"},
+            }],
+        ):
+            result = video.submit_video_sse(client, "chat-1", "test")
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, 212361)
+        self.assertEqual(result.error, "upstream video error 212361: spam user")
+
     def test_download_http_failure_leaves_no_local_or_partial_file(self):
         client = SimpleNamespace(
             session=SimpleNamespace(stream=lambda *_args, **_kwargs: _StatusResponse())

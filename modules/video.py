@@ -19,6 +19,7 @@ class VideoResult:
     chat_id: str = ""
     query_id: str = ""
     error: str = ""
+    error_code: int | None = None
     cost_points: int = 0
     downloaded: bool = False
     local_path: str = ""
@@ -121,17 +122,21 @@ def get_remaining_points(client: OreateClient) -> int:
     return resp["data"]["restPoint"]
 
 
-def _build_attachments(image_url: str) -> list:
+def _build_attachments(
+    image_url: str,
+    image_name: str = "",
+    image_size: int = 0,
+) -> list:
     if not image_url:
         return []
-    ext = image_url.rsplit(".", 1)[-1] if "." in image_url else "webp"
-    name = image_url.rsplit("/", 1)[-1].rsplit(".", 1)[0] if "/" in image_url else "_upload"
+    name = image_name or image_url.rsplit("/", 1)[-1]
+    ext = name.rsplit(".", 1)[-1] if "." in name else "webp"
     return [{
         "bos_url": image_url,
         "bosUrl": image_url,
         "doc_title": name,
         "doc_type": ext,
-        "size": 0,
+        "size": max(0, int(image_size)),
         "flag": "upload",
         "type": "file",
         "status": 1,
@@ -150,6 +155,8 @@ def submit_video_sse(
     ai_type: int | None = None,
     scene: str = "text_or_image",
     image_url: str = "",
+    image_name: str = "",
+    image_size: int = 0,
 ) -> VideoResult:
     """提交视频生成任务，通过 SSE 流式接收结果"""
 
@@ -189,7 +196,15 @@ def submit_video_sse(
         "chatId": chat_id,
         "from": "home",
         "messages": [
-            {"role": "user", "content": prompt, "attachments": _build_attachments(image_url)}
+            {
+                "role": "user",
+                "content": prompt,
+                "attachments": _build_attachments(
+                    image_url,
+                    image_name,
+                    image_size,
+                ),
+            }
         ],
         "videoConfig": {
             "modelName": model_name,
@@ -228,7 +243,21 @@ def submit_video_sse(
             parser.feed(str(data.get("result", "")))
             video_url_result = parser.src or video_url_result
         elif event == "error":
-            return VideoResult(False, error=str(payload), log_id=log_id, chat_id=chat_id)
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            raw_code = data.get("code")
+            try:
+                error_code = int(raw_code)
+            except (TypeError, ValueError):
+                error_code = None
+            message = str(data.get("msg") or "unknown error")
+            label = str(error_code) if error_code is not None else "unknown"
+            return VideoResult(
+                False,
+                error=f"upstream video error {label}: {message}",
+                error_code=error_code,
+                log_id=log_id,
+                chat_id=chat_id,
+            )
         elif event == "end":
             break
 

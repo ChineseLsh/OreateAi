@@ -71,6 +71,8 @@ class VideoReq(BaseModel):
     resolution: str = "720"
     is_audio: bool = True
     image_url: str = ""
+    image_name: str = ""
+    image_size: int = 0
 
 
 class ConfigReq(BaseModel):
@@ -270,11 +272,16 @@ def api_upload(
         fname = filename or file.filename or "image.webp"
         ext = fname.rsplit(".", 1)[-1] if "." in fname else "webp"
         name = fname.rsplit(".", 1)[0] if "." in fname else "image"
-        object_path = upload_image(client, data, name, ext)
+        object_path = upload_image(client, data, name, ext, source="aiVideo")
         if not object_path:
             return JSONResponse(status_code=500, content={"error": "CDN upload failed"})
         cdn_preview = f"https://cdn.oreateai.com/{object_path}"
-        return {"url": object_path, "preview": cdn_preview}
+        return {
+            "url": object_path,
+            "preview": cdn_preview,
+            "filename": fname,
+            "size": len(data),
+        }
     except Exception as e:
         log.exception("upload failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -298,6 +305,7 @@ async def api_video(req: VideoReq, bg: BackgroundTasks):
 def _bg_video(tid: str, req: VideoReq):
     client = None
     email = None
+    quarantine = False
     try:
         with OreateClient() as config_client:
             spec = resolve_video_spec(
@@ -337,6 +345,8 @@ def _bg_video(tid: str, req: VideoReq):
             ai_type=spec.ai_type,
             scene=spec.scene,
             image_url=req.image_url,
+            image_name=req.image_name,
+            image_size=req.image_size,
         )
 
         if video.success:
@@ -369,6 +379,8 @@ def _bg_video(tid: str, req: VideoReq):
             tasks_status[tid] = {"status": "done", "type": "video", "result": task_result}
         else:
             update_video(tid, status="error")
+            if video.error_code == 212361:
+                quarantine = True
             tasks_status[tid] = {"status": "error", "type": "video", "result": {"error": video.error}}
 
     except Exception as e:
@@ -381,6 +393,8 @@ def _bg_video(tid: str, req: VideoReq):
     finally:
         if client and email:
             release_account(client, email)
+            if quarantine:
+                set_account_status(email, "error")
 
 
 # --- API: Task polling ---

@@ -161,6 +161,9 @@ tr:hover td{background:rgba(99,102,241,.03)}
               </label>
               <input type="hidden" id="v-image-url" value="">
               <div id="model-warn"></div>
+              <div id="v-no-human-confirm-wrap" style="display:none;margin-top:8px">
+                <label class="check-option"><input type="checkbox" id="v-no-human-confirm"><span>我确认参考图不含真人</span></label>
+              </div>
             </div>
             <div class="row row-3" style="margin-bottom:14px">
               <div class="field"><label>模型</label>
@@ -578,11 +581,17 @@ function checkModelCompat(){
   const w=document.getElementById('model-warn');
   const img=document.getElementById('v-image-url').value;
   const model=document.getElementById('v-model').value;
-  w.innerHTML=(img&&NO_HUMAN.includes(model))?'<div class="warn-text">⚠ '+model+' 不支持真人参考图，请切换模型或移除图片</div>':'';
+  const needsConfirm=Boolean(img&&NO_HUMAN.includes(model));
+  w.innerHTML=needsConfirm?'<div class="warn-text">'+esc(model)+' 不支持真人参考图，确认图片不含真人后可继续</div>':'';
+  document.getElementById('v-no-human-confirm-wrap').style.display=needsConfirm?'block':'none';
+  if(!needsConfirm) document.getElementById('v-no-human-confirm').checked=false;
 }
 async function handleUpload(input){
   const file=input.files[0]; if(!file) return;
   const pv=document.getElementById('upload-preview');
+  document.getElementById('v-image-url').value='';
+  document.getElementById('v-no-human-confirm').checked=false;
+  checkModelCompat();
   pv.innerHTML='<span class="spin"></span> 上传中...';
   try{
     const form=new FormData(); form.append('file',file); form.append('filename',file.name);
@@ -599,7 +608,7 @@ function clearUpload(){
   document.getElementById('v-image-url').value='';
   document.getElementById('upload-preview').innerHTML='<span class="upload-hint">点击或拖拽上传参考图</span>';
   document.getElementById('img-input').value='';
-  document.getElementById('model-warn').innerHTML='';
+  checkModelCompat();
 }
 
 // Log
@@ -646,7 +655,8 @@ async function doVideoSubmit(){
   if(!lines.length) return;
   const img=document.getElementById('v-image-url').value;
   const model=document.getElementById('v-model').value;
-  if(img&&NO_HUMAN.includes(model)){alert(model+' 不支持真人参考图，请切换模型或移除图片');return}
+  const imageFile=document.getElementById('img-input').files[0];
+  if(img&&NO_HUMAN.includes(model)&&!document.getElementById('v-no-human-confirm').checked){alert(model+' 不支持真人参考图，请先确认参考图不含真人');return}
   const dur=parseInt(document.getElementById('v-duration').value);
   const ratio=document.getElementById('v-ratio').value;
   const resolution=document.getElementById('v-resolution').value;
@@ -656,7 +666,7 @@ async function doVideoSubmit(){
   for(const prompt of lines){
     try{
       const d=await apiFetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({prompt,model_name:model,duration:dur,ratio,resolution,is_audio:isAudio,image_url:img})});
+        body:JSON.stringify({prompt,model_name:model,duration:dur,ratio,resolution,is_audio:isAudio,image_url:img,image_name:imageFile?.name||'',image_size:imageFile?.size||0})});
       activeTasks[d.task_id]={status:'running',prompt,model,duration:dur,resolution,isAudio};
       renderQueue();
       pollTaskAsync(d.task_id);
